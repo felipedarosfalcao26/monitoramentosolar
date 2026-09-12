@@ -35,7 +35,9 @@ export async function POST(request: NextRequest) {
   try {
     // Production (Vercel): store in Vercel Blob — the app's own filesystem there
     // is read-only and nothing written to it would survive past the request.
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
+    // Newer Blob stores authenticate via BLOB_STORE_ID + the runtime's OIDC
+    // token instead of a static BLOB_READ_WRITE_TOKEN — accept either.
+    if (process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID) {
       const blob = await put(`uploads/${filename}`, file, { access: "public" });
       return NextResponse.json({ url: blob.url }, { status: 201 });
     }
