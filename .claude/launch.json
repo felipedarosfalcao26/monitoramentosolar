@@ -6,6 +6,13 @@
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set PATH=%LOCALAPPDATA%\\Programs\\nodejs-lts;%LOCALAPPDATA%\\Programs\\mingit\\cmd;%PATH% && npm run dev"],
       "port": 3000
+    },
+    {
+      "name": "vistoria-solar-https",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set PATH=%LOCALAPPDATA%\\Programs\\nodejs-lts;%LOCALAPPDATA%\\Programs\\mingit\\cmd;%PATH% && npm run dev -- --experimental-https"],
+      "port": 3000,
+      "url": "https://localhost:3000"
     }
   ]
 }
