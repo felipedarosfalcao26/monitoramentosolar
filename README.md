@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vistoria Solar — Plataforma de Vigilância
 
-## Getting Started
+Plataforma de monitoramento de vistorias em usinas solares fotovoltaicas: leitura de QR Codes em campo, captura automática de GPS/horário, mapa de trajeto, dashboard gerencial e relatórios. MVP (Fase 1).
 
-First, run the development server:
+## Stack
+
+- Next.js 16 (App Router, TypeScript), Tailwind CSS
+- Prisma + SQLite (dev) — troque o `datasource` em `prisma/schema.prisma` para Postgres em produção
+- Autenticação por sessão JWT em cookie httpOnly (`jose`), senhas com `bcryptjs`
+- QR Code: geração com `qrcode`, leitura em câmera com `html5-qrcode`
+- Mapa: Leaflet + OpenStreetMap (`react-leaflet`)
+
+## Como rodar
 
 ```bash
+npm install
+npm run db:migrate   # aplica as migrations do Prisma
+npm run db:seed       # cria usuários e dados de exemplo
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Acesse http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Usuários de teste (criados pelo seed)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Perfil     | E-mail                        | Senha         |
+|------------|-------------------------------|---------------|
+| Admin      | admin@vistoriasolar.com       | admin123      |
+| Gestor     | gestor@vistoriasolar.com      | gestor123     |
+| Vigilante  | vigilante@vistoriasolar.com   | vigilante123  |
 
-## Learn More
+## Estrutura
 
-To learn more about Next.js, take a look at the following resources:
+- `src/app/admin/*` — back-office (dashboard, usinas, equipamentos, mapa, relatórios, usuários)
+- `src/app/scan` — fluxo mobile do vigilante (ler QR → GPS → confirmação)
+- `src/app/api/*` — rotas da API (auth, usinas, equipamentos, QR Codes, leituras, dashboard)
+- `src/proxy.ts` — middleware de autenticação/RBAC (convenção "proxy" do Next.js 16)
+- `prisma/schema.prisma` — modelo de dados
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Variáveis de ambiente (`.env`)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+DATABASE_URL="file:./dev.db"
+JWT_SECRET="troque-em-producao"
+GEO_TOLERANCE_OK_METERS=20
+GEO_TOLERANCE_ATTENTION_METERS=50
+```
 
-## Deploy on Vercel
+## Escopo da Fase 1 (concluído)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Login, usuários, usinas, equipamentos, geração/leitura de QR Code, GPS, histórico de leituras, mapa e trajeto, dashboard, relatório (com exportação CSV), controle de permissões por perfil (Administrador / Gestor / Vigilante).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Próximas fases
+
+- Fase 2: rotas planejadas, rondas, ocorrências, fotos, alertas, geofencing, funcionamento offline.
+- Fase 3: BI avançado, integrações (SCADA/O&M/IoT), IA para análise de ocorrências.
