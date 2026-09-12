@@ -1,0 +1,131 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Roles as plain strings (not a native enum) so this schema can move to
+// Postgres later with no type changes: "ADMIN" | "GESTOR" | "VIGILANTE"
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("VIGILANTE")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  scans      Scan[]
+  auditLogs  AuditLog[]
+
+  @@index([role])
+}
+
+model Plant {
+  id            String   @id @default(uuid())
+  name          String
+  code          String   @unique
+  ownerCompany  String
+  cnpj          String?
+  state         String
+  city          String
+  latitude      Float
+  longitude     Float
+  areaHectares  Float?
+  status        String   @default("ATIVA")
+  operationDate DateTime?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  equipment Equipment[]
+  scans     Scan[]
+
+  @@index([code])
+}
+
+model Equipment {
+  id          String   @id @default(uuid())
+  plantId     String
+  code        String
+  name        String
+  type        String
+  latitude    Float
+  longitude   Float
+  description String?
+  status      String   @default("ATIVO")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  plant   Plant    @relation(fields: [plantId], references: [id])
+  qrCode  QrCode?
+  scans   Scan[]
+
+  @@unique([plantId, code])
+  @@index([plantId])
+}
+
+model QrCode {
+  id           String    @id @default(uuid())
+  equipmentId  String    @unique
+  token        String    @unique
+  status       String    @default("ACTIVE")
+  createdAt    DateTime  @default(now())
+  invalidatedAt DateTime?
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@index([token])
+}
+
+// A scan is an immutable record of a QR read event. Its timestamp and
+// coordinates are never editable by users once created (audit requirement).
+model Scan {
+  id                     String   @id @default(uuid())
+  userId                 String
+  plantId                String
+  equipmentId            String
+  qrToken                String
+  scannedAt              DateTime @default(now())
+  latitude               Float
+  longitude              Float
+  accuracyMeters         Float?
+  deviceInfo             String?
+  distanceFromEquipmentM Float?
+  distanceFlag           String?  // "ok" | "attention" | "inconsistent"
+  notes                  String?
+  photoUrl               String?
+  status                 String   @default("OK") // "OK" | "ANOMALIA"
+  offlineCreatedAt       DateTime?
+  syncedAt               DateTime?
+  createdAt              DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id])
+  plant     Plant     @relation(fields: [plantId], references: [id])
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@index([plantId, scannedAt])
+  @@index([userId, scannedAt])
+  @@index([equipmentId])
+}
+
+// Append-only audit trail for administrative changes.
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  before    String?
+  after     String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}

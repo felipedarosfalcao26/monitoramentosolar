@@ -1,0 +1,10 @@
+{
+  "name": "Vistoria Solar",
+  "short_name": "Vistoria Solar",
+  "description": "Plataforma de vigilância e vistoria em usinas solares",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": []
+}
