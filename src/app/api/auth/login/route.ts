@@ -12,6 +12,19 @@ const loginSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  try {
+    return await handleLogin(request);
+  } catch (err) {
+    // TEMPORARY debug instrumentation — remove once the 500 is diagnosed.
+    console.error("LOGIN ERROR", err);
+    return NextResponse.json(
+      { error: "debug", message: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleLogin(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const parsed = loginSchema.safeParse(body);
   if (!parsed.success) {
