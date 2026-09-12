@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
+import { put } from "@vercel/blob";
 import { getSession } from "@/lib/session";
 
 const MAX_SIZE_BYTES = 8 * 1024 * 1024;
@@ -11,8 +12,6 @@ const ALLOWED_TYPES: Record<string, string> = {
   "image/webp": "webp",
 };
 
-// Local-disk photo storage for the MVP — swap for S3/R2 by replacing this
-// handler's write with an upload call and returning the bucket's public URL.
 export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
@@ -31,10 +30,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Arquivo maior que 8MB" }, { status: 400 });
   }
 
+  const filename = `${randomUUID()}.${extension}`;
+
+  // Production (Vercel): store in Vercel Blob — the app's own filesystem there
+  // is read-only and nothing written to it would survive past the request.
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const blob = await put(`uploads/${filename}`, file, { access: "public" });
+    return NextResponse.json({ url: blob.url }, { status: 201 });
+  }
+
+  // Local dev fallback: plain disk write under public/uploads, no token needed.
   const uploadsDir = path.join(process.cwd(), "public", "uploads");
   await mkdir(uploadsDir, { recursive: true });
-
-  const filename = `${randomUUID()}.${extension}`;
   const buffer = Buffer.from(await file.arrayBuffer());
   await writeFile(path.join(uploadsDir, filename), buffer);
 

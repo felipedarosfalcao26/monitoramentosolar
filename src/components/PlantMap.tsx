@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import "leaflet/dist/leaflet.css";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, useMap } from "react-leaflet";
 import L from "leaflet";
 
 export type MapEquipment = {
@@ -21,6 +22,8 @@ export type MapScan = {
   equipmentName: string;
   userName: string;
   distanceFlag: string | null;
+  photoUrl?: string | null;
+  notes?: string | null;
 };
 
 function dotIcon(color: string) {
@@ -40,6 +43,27 @@ const scanFlagColor: Record<string, string> = {
   inconsistent: "#dc2626",
 };
 
+/** Fits the viewport to every equipment + scan point, even when a scan lands
+ * far from the plant (e.g. test data captured somewhere else entirely). */
+function FitToData({ points, fallbackCenter }: { points: [number, number][]; fallbackCenter: [number, number] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (points.length === 0) {
+      map.setView(fallbackCenter, 16);
+      return;
+    }
+    if (points.length === 1) {
+      map.setView(points[0], 16);
+      return;
+    }
+    map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(points)]);
+
+  return null;
+}
+
 export default function PlantMap({
   center,
   equipment,
@@ -55,12 +79,19 @@ export default function PlantMap({
     .sort((a, b) => new Date(a.scannedAt).getTime() - new Date(b.scannedAt).getTime())
     .map((s) => [s.latitude, s.longitude]);
 
+  const allPoints: [number, number][] = [
+    ...equipment.map((eq) => [eq.latitude, eq.longitude] as [number, number]),
+    ...scans.map((s) => [s.latitude, s.longitude] as [number, number]),
+  ];
+
   return (
     <MapContainer center={center} zoom={16} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+
+      <FitToData points={allPoints} fallbackCenter={center} />
 
       {equipment.map((eq) => (
         <Marker key={eq.id} position={[eq.latitude, eq.longitude]} icon={eq.visited ? visitedIcon : notVisitedIcon}>
@@ -78,15 +109,31 @@ export default function PlantMap({
         <CircleMarker
           key={s.id}
           center={[s.latitude, s.longitude]}
-          radius={5}
+          radius={7}
           pathOptions={{ color: scanFlagColor[s.distanceFlag ?? "ok"], fillOpacity: 0.8 }}
         >
           <Popup>
-            <strong>{s.equipmentName}</strong>
-            <br />
-            {s.userName}
-            <br />
-            {new Date(s.scannedAt).toLocaleString("pt-BR")}
+            <div style={{ minWidth: 160 }}>
+              <strong>{s.equipmentName}</strong>
+              <br />
+              {s.userName}
+              <br />
+              {new Date(s.scannedAt).toLocaleString("pt-BR")}
+              {s.notes && (
+                <>
+                  <br />
+                  <em>{s.notes}</em>
+                </>
+              )}
+              {s.photoUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={s.photoUrl}
+                  alt="Foto do registro"
+                  style={{ marginTop: 6, width: "100%", maxWidth: 200, borderRadius: 6 }}
+                />
+              )}
+            </div>
           </Popup>
         </CircleMarker>
       ))}

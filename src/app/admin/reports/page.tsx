@@ -12,6 +12,7 @@ type Scan = {
   distanceFlag: string | null;
   distanceFromEquipmentM: number | null;
   notes: string | null;
+  photoUrl: string | null;
   user: { name: string };
   equipment: { name: string; code: string };
   plant: { name: string };
@@ -149,6 +150,8 @@ export default function ReportsPage() {
               <th className="px-4 py-3">Precisão GPS</th>
               <th className="px-4 py-3">Distância</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Observações</th>
+              <th className="px-4 py-3">Foto</th>
             </tr>
           </thead>
           <tbody>
@@ -163,11 +166,24 @@ export default function ReportsPage() {
                 <td className="px-4 py-3">{s.accuracyMeters ? `${s.accuracyMeters.toFixed(0)} m` : "—"}</td>
                 <td className="px-4 py-3">{s.distanceFromEquipmentM ? `${s.distanceFromEquipmentM.toFixed(0)} m` : "—"}</td>
                 <td className="px-4 py-3">{FLAG_LABEL[s.distanceFlag ?? "ok"]}</td>
+                <td className="max-w-[200px] px-4 py-3 truncate" title={s.notes ?? ""}>
+                  {s.notes ?? "—"}
+                </td>
+                <td className="px-4 py-3">
+                  {s.photoUrl ? (
+                    <a href={s.photoUrl} target="_blank" rel="noopener noreferrer">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={s.photoUrl} alt="Foto do registro" className="h-10 w-10 rounded object-cover hover:opacity-80" />
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                </td>
               </tr>
             ))}
             {scans.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
                   Nenhuma leitura encontrada para os filtros selecionados.
                 </td>
               </tr>
