@@ -1,6 +1,6 @@
 # Vistoria Solar — Plataforma de Vigilância
 
-Plataforma de monitoramento de vistorias em usinas solares fotovoltaicas: leitura de QR Codes em campo, captura automática de GPS/horário, mapa de trajeto, dashboard gerencial e relatórios. MVP (Fase 1).
+Plataforma de monitoramento de vistorias em usinas solares fotovoltaicas: leitura de QR Codes em campo, captura automática de GPS/horário, mapa de trajeto, rotas e rondas planejadas, ocorrências, alertas e dashboard gerencial. Fases 1 e 2 concluídas.
 
 ## Stack
 
@@ -31,10 +31,11 @@ Acesse http://localhost:3000.
 
 ## Estrutura
 
-- `src/app/admin/*` — back-office (dashboard, usinas, equipamentos, mapa, relatórios, usuários)
-- `src/app/scan` — fluxo mobile do vigilante (ler QR → GPS → confirmação)
-- `src/app/api/*` — rotas da API (auth, usinas, equipamentos, QR Codes, leituras, dashboard)
+- `src/app/admin/*` — back-office (dashboard, usinas, equipamentos, rotas, rondas, ocorrências, mapa, relatórios, usuários)
+- `src/app/scan` — fluxo mobile do vigilante (iniciar ronda → ler QR → GPS → confirmação → ocorrência)
+- `src/app/api/*` — rotas da API (auth, usinas, equipamentos, QR Codes, leituras, rotas, rondas, ocorrências, alertas, upload de fotos, dashboard)
 - `src/proxy.ts` — middleware de autenticação/RBAC (convenção "proxy" do Next.js 16)
+- `src/lib/offlineQueue.ts` — fila local (IndexedDB/Dexie) para leituras feitas sem internet
 - `prisma/schema.prisma` — modelo de dados
 
 ## Variáveis de ambiente (`.env`)
@@ -50,7 +51,15 @@ GEO_TOLERANCE_ATTENTION_METERS=50
 
 Login, usuários, usinas, equipamentos, geração/leitura de QR Code, GPS, histórico de leituras, mapa e trajeto, dashboard, relatório (com exportação CSV), controle de permissões por perfil (Administrador / Gestor / Vigilante).
 
-## Próximas fases
+## Escopo da Fase 2 (concluído)
 
-- Fase 2: rotas planejadas, rondas, ocorrências, fotos, alertas, geofencing, funcionamento offline.
-- Fase 3: BI avançado, integrações (SCADA/O&M/IoT), IA para análise de ocorrências.
+- **Rotas planejadas**: sequência ordenada de pontos por usina, turno, dias da semana e tolerância de horário (`/admin/routes`).
+- **Rondas**: o vigilante inicia uma ronda (usina + rota opcional) pelo `/scan`; cada leitura fica vinculada à ronda; ao encerrar, calcula-se pontos visitados/planejados, % de conclusão, duração e distância percorrida (`/admin/rounds`).
+- **Ocorrências**: registro de campo (categoria, severidade, descrição, foto) opcionalmente vinculado a uma leitura (`/admin/occurrences`).
+- **Fotos**: upload local em `public/uploads` via `/api/uploads` (trocar por S3/R2 é só reescrever esse handler).
+- **Alertas automáticos**: ronda incompleta, leitura inconsistente (fora da tolerância de GPS) e ocorrência crítica — aparecem no dashboard e podem ser resolvidos.
+- **Funcionamento offline**: leituras feitas sem internet são guardadas em IndexedDB (Dexie) no dispositivo e sincronizadas automaticamente ao reconectar, preservando o horário original da captura.
+
+## Próxima fase
+
+- Fase 3: BI avançado, integrações (SCADA/O&M/IoT), IA para análise de ocorrências, geofencing por polígono.
