@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import OccurrenceForm from "@/components/OccurrenceForm";
+import { uploadPhoto } from "@/lib/uploadPhoto";
 import { flushPendingScans, listPendingScans, queueScan } from "@/lib/offlineQueue";
 
 const QrScanner = dynamic(() => import("@/components/QrScanner"), { ssr: false });
@@ -20,7 +21,26 @@ type Round = {
 };
 type Equipment = { id: string; code: string; name: string; type: string; plant: { id: string; name: string } };
 
-type Step = "loading" | "home" | "scanning" | "resolving" | "locating" | "submitting" | "done" | "occurrence" | "ending" | "error";
+type Step =
+  | "loading"
+  | "home"
+  | "scanning"
+  | "resolving"
+  | "locating"
+  | "review"
+  | "submitting"
+  | "done"
+  | "occurrence"
+  | "ending"
+  | "error";
+
+type PendingReading = {
+  token: string;
+  capturedAt: string;
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+};
 
 type ScanResult = {
   scannedAt: string;
@@ -50,6 +70,10 @@ function ScanPageInner() {
   const [selectedPlantId, setSelectedPlantId] = useState("");
   const [selectedRouteId, setSelectedRouteId] = useState("");
   const [equipment, setEquipment] = useState<Equipment | null>(null);
+  const [reading, setReading] = useState<PendingReading | null>(null);
+  const [notes, setNotes] = useState("");
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingSync, setPendingSync] = useState(0);
@@ -116,6 +140,16 @@ function ScanPageInner() {
       .then((d) => setRoutes((d.routes ?? []).filter((r: { active: boolean }) => r.active)));
   }, [selectedPlantId]);
 
+  useEffect(() => {
+    if (!photoFile) {
+      setPhotoPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(photoFile);
+    setPhotoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photoFile]);
+
   async function startRound() {
     const res = await fetch("/api/rounds", {
       method: "POST",
@@ -141,99 +175,120 @@ function ScanPageInner() {
       body: JSON.stringify({ action: "end" }),
     });
     setRound(null);
-    setEquipment(null);
-    setResult(null);
+    clearReadingState();
     setStep("home");
   }
 
-  const processToken = useCallback(
-    async (token: string) => {
-      setStep("resolving");
-      setError(null);
-      try {
-        const res = await fetch(`/api/qr/${token}`);
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.error ?? "QR Code inválido");
-          setStep("error");
-          return;
-        }
-        setEquipment(data.equipment);
-        setStep("locating");
+  function clearReadingState() {
+    setEquipment(null);
+    setReading(null);
+    setResult(null);
+    setNotes("");
+    setPhotoFile(null);
+  }
 
-        if (!("geolocation" in navigator)) {
-          setError("Este dispositivo não tem suporte a geolocalização.");
-          setStep("error");
-          return;
-        }
-
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            setStep("submitting");
-            const payload = {
-              qrToken: token,
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              accuracyMeters: position.coords.accuracy,
-              deviceInfo: navigator.userAgent,
-              roundId: round?.id,
-            };
-
-            if (!navigator.onLine) {
-              await queueScan({
-                id: crypto.randomUUID(),
-                equipmentName: data.equipment.name,
-                offlineCreatedAt: new Date().toISOString(),
-                ...payload,
-              });
-              refreshPendingCount();
-              setResult({ scannedAt: new Date().toISOString(), distanceFlag: null, equipmentId: data.equipment.id });
-              if (round) {
-                setRound({ ...round, scans: [...round.scans, { equipmentId: data.equipment.id }] });
-              }
-              setStep("done");
-              return;
-            }
-
-            try {
-              const submitRes = await fetch("/api/scans", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-              });
-              const submitData = await submitRes.json();
-              if (!submitRes.ok) {
-                setError(submitData.error ?? "Não foi possível registrar a inspeção");
-                setStep("error");
-                return;
-              }
-              setResult({
-                scannedAt: submitData.scan.scannedAt,
-                distanceFlag: submitData.scan.distanceFlag,
-                equipmentId: submitData.scan.equipmentId,
-              });
-              if (round) {
-                setRound({ ...round, scans: [...round.scans, { equipmentId: submitData.scan.equipmentId }] });
-              }
-              setStep("done");
-            } catch {
-              setError("Falha de conexão ao registrar a inspeção.");
-              setStep("error");
-            }
-          },
-          () => {
-            setError("Permissão de localização negada. Ative o GPS para registrar a inspeção.");
-            setStep("error");
-          },
-          { enableHighAccuracy: true, timeout: 15000 }
-        );
-      } catch {
-        setError("Falha de conexão ao validar o QR Code.");
+  const processToken = useCallback(async (token: string) => {
+    setStep("resolving");
+    setError(null);
+    try {
+      const res = await fetch(`/api/qr/${token}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "QR Code inválido");
         setStep("error");
+        return;
       }
-    },
-    [round, refreshPendingCount]
-  );
+      setEquipment(data.equipment);
+      setStep("locating");
+
+      if (!("geolocation" in navigator)) {
+        setError("Este dispositivo não tem suporte a geolocalização.");
+        setStep("error");
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setReading({
+            token,
+            capturedAt: new Date().toISOString(),
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracyMeters: position.coords.accuracy,
+          });
+          setStep("review");
+        },
+        () => {
+          setError("Permissão de localização negada. Ative o GPS para registrar a inspeção.");
+          setStep("error");
+        },
+        { enableHighAccuracy: true, timeout: 15000 }
+      );
+    } catch {
+      setError("Falha de conexão ao validar o QR Code.");
+      setStep("error");
+    }
+  }, []);
+
+  async function confirmReading() {
+    if (!reading || !equipment) return;
+    setStep("submitting");
+
+    let photoUrl: string | undefined;
+    if (photoFile) {
+      const uploaded = await uploadPhoto(photoFile);
+      if (uploaded) photoUrl = uploaded;
+    }
+
+    const payload = {
+      qrToken: reading.token,
+      latitude: reading.latitude,
+      longitude: reading.longitude,
+      accuracyMeters: reading.accuracyMeters,
+      deviceInfo: navigator.userAgent,
+      roundId: round?.id,
+      notes: notes || undefined,
+      photoUrl,
+    };
+
+    if (!navigator.onLine) {
+      await queueScan({
+        id: crypto.randomUUID(),
+        equipmentName: equipment.name,
+        offlineCreatedAt: reading.capturedAt,
+        ...payload,
+      });
+      refreshPendingCount();
+      setResult({ scannedAt: reading.capturedAt, distanceFlag: null, equipmentId: equipment.id });
+      if (round) setRound({ ...round, scans: [...round.scans, { equipmentId: equipment.id }] });
+      setStep("done");
+      return;
+    }
+
+    try {
+      const submitRes = await fetch("/api/scans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const submitData = await submitRes.json();
+      if (!submitRes.ok) {
+        setError(submitData.error ?? "Não foi possível registrar a inspeção");
+        setStep("error");
+        return;
+      }
+      setResult({
+        scannedAt: submitData.scan.scannedAt,
+        distanceFlag: submitData.scan.distanceFlag,
+        equipmentId: submitData.scan.equipmentId,
+      });
+      if (round) setRound({ ...round, scans: [...round.scans, { equipmentId: submitData.scan.equipmentId }] });
+      setStep("done");
+    } catch {
+      setError("Falha de conexão ao registrar a inspeção.");
+      setStep("error");
+    }
+  }
 
   useEffect(() => {
     const tokenFromUrl = searchParams.get("token");
@@ -245,8 +300,7 @@ function ScanPageInner() {
 
   function reset() {
     setStep("home");
-    setEquipment(null);
-    setResult(null);
+    clearReadingState();
     setError(null);
     router.replace("/scan");
   }
@@ -412,6 +466,70 @@ function ScanPageInner() {
           </div>
         )}
 
+        {step === "review" && equipment && reading && (
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-slate-900 shadow-xl">
+            <h2 className="text-base font-semibold">Confirmar Inspeção</h2>
+
+            <dl className="mt-3 space-y-2 text-sm">
+              <Row label="Equipamento" value={`${equipment.name} (${equipment.code})`} />
+              <Row label="Usina" value={equipment.plant.name} />
+              <Row label="Data/hora" value={new Date(reading.capturedAt).toLocaleString("pt-BR")} />
+              <Row label="Coordenadas" value={`${reading.latitude.toFixed(6)}, ${reading.longitude.toFixed(6)}`} />
+              {reading.accuracyMeters !== undefined && (
+                <Row label="Precisão GPS" value={`± ${Math.round(reading.accuracyMeters)} m`} />
+              )}
+            </dl>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-xs font-medium text-slate-600">Foto (opcional)</label>
+              {photoPreview ? (
+                <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photoPreview} alt="Prévia da foto" className="h-40 w-full rounded-lg object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setPhotoFile(null)}
+                    className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-1 text-xs text-white"
+                  >
+                    remover
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+                  className="w-full text-sm"
+                />
+              )}
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-xs font-medium text-slate-600">Observações / Ocorrência</label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Algo a registrar sobre este ponto?"
+              />
+            </div>
+
+            <div className="mt-5 flex gap-2">
+              <button onClick={reset} className="flex-1 rounded-xl border border-slate-300 py-3 text-sm font-medium text-slate-700">
+                Descartar
+              </button>
+              <button
+                onClick={confirmReading}
+                className="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-500"
+              >
+                Registrar Inspeção
+              </button>
+            </div>
+          </div>
+        )}
+
         {step === "done" && equipment && result && (
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center text-slate-900 shadow-xl">
             <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-3xl text-emerald-600">
@@ -436,20 +554,12 @@ function ScanPageInner() {
                 }
               />
             </dl>
-            <div className="mt-6 flex gap-2">
-              <button
-                onClick={() => setStep("occurrence")}
-                className="flex-1 rounded-xl border border-slate-300 py-3 text-sm font-medium text-slate-700"
-              >
-                Registrar Ocorrência
-              </button>
-              <button
-                onClick={reset}
-                className="flex-1 rounded-xl bg-slate-900 py-3 text-sm font-medium text-white hover:bg-slate-800"
-              >
-                Próximo QR Code
-              </button>
-            </div>
+            <button
+              onClick={reset}
+              className="mt-6 w-full rounded-xl bg-slate-900 py-3 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              Próximo QR Code
+            </button>
           </div>
         )}
 

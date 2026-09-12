@@ -9,6 +9,8 @@ export type PendingScan = {
   accuracyMeters?: number;
   deviceInfo?: string;
   roundId?: string;
+  notes?: string;
+  photoUrl?: string;
   offlineCreatedAt: string;
 };
 
@@ -50,6 +52,8 @@ export async function flushPendingScans(): Promise<{ synced: number; failed: num
           accuracyMeters: scan.accuracyMeters,
           deviceInfo: scan.deviceInfo,
           roundId: scan.roundId,
+          notes: scan.notes,
+          photoUrl: scan.photoUrl,
           offlineCreatedAt: scan.offlineCreatedAt,
         }),
       });

@@ -11,12 +11,28 @@ const ELEMENT_ID = "qr-scanner-viewport";
 
 export default function QrScanner({ onDecode, onError }: QrScannerProps) {
   const scannerRef = useRef<import("html5-qrcode").Html5Qrcode | null>(null);
+  const scanningRef = useRef(false);
   const stoppedRef = useRef(false);
 
   useEffect(() => {
     stoppedRef.current = false;
-
     let cancelled = false;
+
+    async function stopAndRelease() {
+      const scanner = scannerRef.current;
+      if (!scanner || !scanningRef.current) return;
+      scanningRef.current = false;
+      try {
+        await scanner.stop();
+      } catch {
+        // already stopped — ignore
+      }
+      try {
+        scanner.clear();
+      } catch {
+        // no-op if nothing to clear
+      }
+    }
 
     import("html5-qrcode").then(async ({ Html5Qrcode }) => {
       if (cancelled) return;
@@ -30,13 +46,17 @@ export default function QrScanner({ onDecode, onError }: QrScannerProps) {
           (decodedText) => {
             if (stoppedRef.current) return;
             stoppedRef.current = true;
-            onDecode(decodedText);
-            scanner.stop().catch(() => {});
+            stopAndRelease().finally(() => onDecode(decodedText));
           },
           () => {
             // ignore per-frame decode failures — expected while framing the code
           }
         );
+        if (cancelled) {
+          stopAndRelease();
+          return;
+        }
+        scanningRef.current = true;
       } catch {
         onError?.("Não foi possível acessar a câmera. Verifique as permissões do navegador.");
       }
@@ -44,10 +64,7 @@ export default function QrScanner({ onDecode, onError }: QrScannerProps) {
 
     return () => {
       cancelled = true;
-      const scanner = scannerRef.current;
-      if (scanner) {
-        scanner.stop().catch(() => {});
-      }
+      stopAndRelease();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
