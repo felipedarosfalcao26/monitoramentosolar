@@ -9,6 +9,9 @@ const NAV_ITEMS: { href: string; label: string; icon: string; adminOnly?: boolea
   { href: "/admin/map", label: "Mapa", icon: "🗺️" },
   { href: "/admin/plants", label: "Usinas", icon: "☀️" },
   { href: "/admin/equipment", label: "Equipamentos", icon: "🔧" },
+  { href: "/admin/routes", label: "Rotas", icon: "🧭" },
+  { href: "/admin/rounds", label: "Rondas", icon: "🚶" },
+  { href: "/admin/occurrences", label: "Ocorrências", icon: "⚠️" },
   { href: "/admin/reports", label: "Relatórios", icon: "📄" },
   { href: "/admin/users", label: "Usuários", icon: "👤", adminOnly: true },
 ];

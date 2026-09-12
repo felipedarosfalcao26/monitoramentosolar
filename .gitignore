@@ -40,6 +40,10 @@ yarn-error.log*
 /prisma/dev.db
 /prisma/dev.db-journal
 
+# uploaded photos (local-disk storage for dev)
+/public/uploads/*
+!/public/uploads/.gitkeep
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

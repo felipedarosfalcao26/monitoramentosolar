@@ -22,6 +22,20 @@ export function haversineDistanceMeters(
 
 export type DistanceFlag = "ok" | "attention" | "inconsistent";
 
+/** Sums the great-circle distance across an ordered sequence of points. */
+export function pathDistanceMeters(points: { latitude: number; longitude: number }[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += haversineDistanceMeters(
+      points[i - 1].latitude,
+      points[i - 1].longitude,
+      points[i].latitude,
+      points[i].longitude
+    );
+  }
+  return total;
+}
+
 export function classifyDistance(distanceMeters: number): DistanceFlag {
   const okLimit = Number(process.env.GEO_TOLERANCE_OK_METERS ?? 20);
   const attentionLimit = Number(process.env.GEO_TOLERANCE_ATTENTION_METERS ?? 50);

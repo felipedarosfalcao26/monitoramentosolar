@@ -19,8 +19,10 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  scans      Scan[]
-  auditLogs  AuditLog[]
+  scans       Scan[]
+  auditLogs   AuditLog[]
+  rounds      Round[]
+  occurrences Occurrence[]
 
   @@index([role])
 }
@@ -44,6 +46,10 @@ model Plant {
 
   equipment Equipment[]
   scans     Scan[]
+  routes      InspectionRoute[]
+  rounds      Round[]
+  occurrences Occurrence[]
+  alerts      Alert[]
 
   @@index([code])
 }
@@ -64,6 +70,8 @@ model Equipment {
   plant   Plant    @relation(fields: [plantId], references: [id])
   qrCode  QrCode?
   scans   Scan[]
+  routePoints RoutePoint[]
+  occurrences Occurrence[]
 
   @@unique([plantId, code])
   @@index([plantId])
@@ -89,6 +97,7 @@ model Scan {
   userId                 String
   plantId                String
   equipmentId            String
+  roundId                String?
   qrToken                String
   scannedAt              DateTime @default(now())
   latitude               Float
@@ -104,13 +113,121 @@ model Scan {
   syncedAt               DateTime?
   createdAt              DateTime @default(now())
 
-  user      User      @relation(fields: [userId], references: [id])
-  plant     Plant     @relation(fields: [plantId], references: [id])
-  equipment Equipment @relation(fields: [equipmentId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  plant     Plant      @relation(fields: [plantId], references: [id])
+  equipment Equipment  @relation(fields: [equipmentId], references: [id])
+  round     Round?     @relation(fields: [roundId], references: [id])
+  occurrences Occurrence[]
 
   @@index([plantId, scannedAt])
   @@index([userId, scannedAt])
   @@index([equipmentId])
+  @@index([roundId])
+}
+
+// A named, ordered sequence of inspection points a route can be planned from.
+model InspectionRoute {
+  id                String   @id @default(uuid())
+  plantId           String
+  name              String
+  shift             String? // "DIA" | "NOITE" | free text
+  daysOfWeek        String  @default("1,2,3,4,5,6,0") // comma-separated 0=Sun..6=Sat
+  toleranceMinutes  Int     @default(30)
+  active            Boolean @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  plant  Plant        @relation(fields: [plantId], references: [id])
+  points RoutePoint[]
+  rounds Round[]
+
+  @@index([plantId])
+}
+
+model RoutePoint {
+  id          String @id @default(uuid())
+  routeId     String
+  equipmentId String
+  order       Int
+  expectedTimeOfDay String? // "HH:MM", optional
+
+  route     InspectionRoute @relation(fields: [routeId], references: [id])
+  equipment Equipment       @relation(fields: [equipmentId], references: [id])
+
+  @@unique([routeId, equipmentId])
+  @@index([routeId])
+}
+
+// A round is one vigilante's walk through the plant, from start to finish.
+// Its planned/visited point counts are computed when it ends.
+model Round {
+  id                String    @id @default(uuid())
+  userId            String
+  plantId           String
+  routeId           String?
+  startedAt         DateTime  @default(now())
+  endedAt           DateTime?
+  status            String    @default("IN_PROGRESS") // "IN_PROGRESS" | "COMPLETED"
+  plannedPoints     Int       @default(0)
+  visitedPoints     Int       @default(0)
+  completionPercent Float?
+  distanceMeters    Float?
+  createdAt         DateTime  @default(now())
+
+  user  User             @relation(fields: [userId], references: [id])
+  plant Plant            @relation(fields: [plantId], references: [id])
+  route InspectionRoute? @relation(fields: [routeId], references: [id])
+  scans Scan[]
+  alerts Alert[]
+
+  @@index([plantId, startedAt])
+  @@index([userId, startedAt])
+}
+
+// Something the vigilante found in the field: a damaged fence, an open
+// gate, an intruder, etc. Optionally tied to the scan that triggered it.
+model Occurrence {
+  id          String   @id @default(uuid())
+  scanId      String?
+  equipmentId String?
+  plantId     String
+  userId      String
+  category    String
+  severity    String   @default("MEDIA") // "BAIXA" | "MEDIA" | "ALTA" | "CRITICA"
+  description String?
+  photoUrl    String?
+  status      String   @default("ABERTA") // "ABERTA" | "EM_ANALISE" | "EM_ANDAMENTO" | "RESOLVIDA" | "CANCELADA"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  resolvedAt  DateTime?
+
+  scan      Scan?      @relation(fields: [scanId], references: [id])
+  equipment Equipment? @relation(fields: [equipmentId], references: [id])
+  plant     Plant      @relation(fields: [plantId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+
+  @@index([plantId, status])
+  @@index([equipmentId])
+}
+
+// Operational alerts raised automatically from rounds/scans, for the
+// dashboard and (later) email/WhatsApp notification channels.
+model Alert {
+  id        String   @id @default(uuid())
+  plantId   String
+  roundId   String?
+  type      String  // "RONDA_INCOMPLETA" | "LEITURA_INCONSISTENTE" | "LEITURA_FORA_DE_HORARIO" | "QRCODE_NAO_VISITADO"
+  severity  String  @default("MEDIA")
+  message   String
+  status    String  @default("ABERTO") // "ABERTO" | "RESOLVIDO"
+  createdAt DateTime @default(now())
+  resolvedAt DateTime?
+
+  plant Plant  @relation(fields: [plantId], references: [id])
+  round Round? @relation(fields: [roundId], references: [id])
+
+  @@index([plantId, status])
+  @@index([createdAt])
 }
 
 // Append-only audit trail for administrative changes.

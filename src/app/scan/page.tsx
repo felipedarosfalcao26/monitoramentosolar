@@ -3,23 +3,29 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
+import OccurrenceForm from "@/components/OccurrenceForm";
+import { flushPendingScans, listPendingScans, queueScan } from "@/lib/offlineQueue";
 
 const QrScanner = dynamic(() => import("@/components/QrScanner"), { ssr: false });
 
-type Equipment = {
+type Plant = { id: string; name: string };
+type RoutePoint = { equipmentId: string; order: number; equipment: { id: string; name: string; code: string } };
+type RouteOption = { id: string; name: string; points: RoutePoint[] };
+type Round = {
   id: string;
-  code: string;
-  name: string;
-  type: string;
-  plant: { id: string; name: string };
+  plantId: string;
+  routeId: string | null;
+  route: RouteOption | null;
+  scans: { equipmentId: string }[];
 };
+type Equipment = { id: string; code: string; name: string; type: string; plant: { id: string; name: string } };
 
-type Step = "home" | "scanning" | "resolving" | "locating" | "submitting" | "done" | "error";
+type Step = "loading" | "home" | "scanning" | "resolving" | "locating" | "submitting" | "done" | "occurrence" | "ending" | "error";
 
 type ScanResult = {
   scannedAt: string;
   distanceFlag: string | null;
-  accuracyMeters: number | null;
+  equipmentId: string;
 };
 
 function extractToken(raw: string): string {
@@ -36,89 +42,206 @@ function extractToken(raw: string): string {
 function ScanPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [step, setStep] = useState<Step>("home");
+  const [step, setStep] = useState<Step>("loading");
+  const [userName, setUserName] = useState("");
+  const [round, setRound] = useState<Round | null>(null);
+  const [plants, setPlants] = useState<Plant[]>([]);
+  const [routes, setRoutes] = useState<RouteOption[]>([]);
+  const [selectedPlantId, setSelectedPlantId] = useState("");
+  const [selectedRouteId, setSelectedRouteId] = useState("");
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [userName, setUserName] = useState<string>("");
+  const [pendingSync, setPendingSync] = useState(0);
+  const [isOnline, setIsOnline] = useState(true);
+
+  const refreshPendingCount = useCallback(() => {
+    listPendingScans().then((list) => setPendingSync(list.length));
+  }, []);
+
+  const trySync = useCallback(async () => {
+    const { synced } = await flushPendingScans();
+    if (synced > 0) refreshPendingCount();
+  }, [refreshPendingCount]);
 
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => setUserName(d.user?.name ?? ""));
-  }, []);
 
-  const processToken = useCallback(async (token: string) => {
-    setStep("resolving");
-    setError(null);
-    try {
-      const res = await fetch(`/api/qr/${token}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "QR Code inválido");
-        setStep("error");
-        return;
-      }
-      setEquipment(data.equipment);
-      setStep("locating");
-
-      if (!("geolocation" in navigator)) {
-        setError("Este dispositivo não tem suporte a geolocalização.");
-        setStep("error");
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          setStep("submitting");
-          try {
-            const submitRes = await fetch("/api/scans", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                qrToken: token,
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-                accuracyMeters: position.coords.accuracy,
-                deviceInfo: navigator.userAgent,
-              }),
+    fetch("/api/rounds")
+      .then((r) => r.json())
+      .then((d) => {
+        const active = (d.rounds ?? []).find((r: { status: string }) => r.status === "IN_PROGRESS");
+        if (active) {
+          fetch(`/api/rounds/${active.id}`)
+            .then((r) => r.json())
+            .then((detail) => {
+              setRound(detail.round);
+              setStep("home");
             });
-            const submitData = await submitRes.json();
-            if (!submitRes.ok) {
-              setError(submitData.error ?? "Não foi possível registrar a inspeção");
-              setStep("error");
-              return;
-            }
-            setResult({
-              scannedAt: submitData.scan.scannedAt,
-              distanceFlag: submitData.scan.distanceFlag,
-              accuracyMeters: submitData.scan.accuracyMeters,
-            });
-            setStep("done");
-          } catch {
-            setError("Falha de conexão ao registrar a inspeção.");
-            setStep("error");
-          }
-        },
-        () => {
-          setError("Permissão de localização negada. Ative o GPS para registrar a inspeção.");
-          setStep("error");
-        },
-        { enableHighAccuracy: true, timeout: 15000 }
-      );
-    } catch {
-      setError("Falha de conexão ao validar o QR Code.");
-      setStep("error");
-    }
+        } else {
+          setStep("home");
+        }
+      });
+
+    fetch("/api/plants")
+      .then((r) => r.json())
+      .then((d) => {
+        setPlants(d.plants ?? []);
+        if (d.plants?.[0]) setSelectedPlantId(d.plants[0].id);
+      });
+
+    refreshPendingCount();
+    setIsOnline(navigator.onLine);
+    const onOnline = () => {
+      setIsOnline(true);
+      trySync();
+    };
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    trySync();
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    if (!selectedPlantId) return;
+    fetch(`/api/routes?plantId=${selectedPlantId}`)
+      .then((r) => r.json())
+      .then((d) => setRoutes((d.routes ?? []).filter((r: { active: boolean }) => r.active)));
+  }, [selectedPlantId]);
+
+  async function startRound() {
+    const res = await fetch("/api/rounds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plantId: selectedPlantId, routeId: selectedRouteId || undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error ?? "Não foi possível iniciar a ronda");
+      setStep("error");
+      return;
+    }
+    const detail = await fetch(`/api/rounds/${data.round.id}`).then((r) => r.json());
+    setRound(detail.round);
+  }
+
+  async function endRound() {
+    if (!round) return;
+    setStep("ending");
+    await fetch(`/api/rounds/${round.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "end" }),
+    });
+    setRound(null);
+    setEquipment(null);
+    setResult(null);
+    setStep("home");
+  }
+
+  const processToken = useCallback(
+    async (token: string) => {
+      setStep("resolving");
+      setError(null);
+      try {
+        const res = await fetch(`/api/qr/${token}`);
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error ?? "QR Code inválido");
+          setStep("error");
+          return;
+        }
+        setEquipment(data.equipment);
+        setStep("locating");
+
+        if (!("geolocation" in navigator)) {
+          setError("Este dispositivo não tem suporte a geolocalização.");
+          setStep("error");
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            setStep("submitting");
+            const payload = {
+              qrToken: token,
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              accuracyMeters: position.coords.accuracy,
+              deviceInfo: navigator.userAgent,
+              roundId: round?.id,
+            };
+
+            if (!navigator.onLine) {
+              await queueScan({
+                id: crypto.randomUUID(),
+                equipmentName: data.equipment.name,
+                offlineCreatedAt: new Date().toISOString(),
+                ...payload,
+              });
+              refreshPendingCount();
+              setResult({ scannedAt: new Date().toISOString(), distanceFlag: null, equipmentId: data.equipment.id });
+              if (round) {
+                setRound({ ...round, scans: [...round.scans, { equipmentId: data.equipment.id }] });
+              }
+              setStep("done");
+              return;
+            }
+
+            try {
+              const submitRes = await fetch("/api/scans", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+              const submitData = await submitRes.json();
+              if (!submitRes.ok) {
+                setError(submitData.error ?? "Não foi possível registrar a inspeção");
+                setStep("error");
+                return;
+              }
+              setResult({
+                scannedAt: submitData.scan.scannedAt,
+                distanceFlag: submitData.scan.distanceFlag,
+                equipmentId: submitData.scan.equipmentId,
+              });
+              if (round) {
+                setRound({ ...round, scans: [...round.scans, { equipmentId: submitData.scan.equipmentId }] });
+              }
+              setStep("done");
+            } catch {
+              setError("Falha de conexão ao registrar a inspeção.");
+              setStep("error");
+            }
+          },
+          () => {
+            setError("Permissão de localização negada. Ative o GPS para registrar a inspeção.");
+            setStep("error");
+          },
+          { enableHighAccuracy: true, timeout: 15000 }
+        );
+      } catch {
+        setError("Falha de conexão ao validar o QR Code.");
+        setStep("error");
+      }
+    },
+    [round, refreshPendingCount]
+  );
+
+  useEffect(() => {
     const tokenFromUrl = searchParams.get("token");
-    if (tokenFromUrl && step === "home") {
+    if (tokenFromUrl && step === "home" && round) {
       processToken(tokenFromUrl);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, round]);
 
   function reset() {
     setStep("home");
@@ -134,6 +257,8 @@ function ScanPageInner() {
     router.refresh();
   }
 
+  const visitedIds = new Set(round?.scans.map((s) => s.equipmentId) ?? []);
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-900 text-white">
       <header className="flex items-center justify-between px-5 py-4">
@@ -141,29 +266,121 @@ function ScanPageInner() {
           <p className="text-xs text-slate-400">Vigilante</p>
           <p className="text-sm font-medium">{userName || "..."}</p>
         </div>
-        <button onClick={logout} className="text-xs text-slate-400 underline">
-          Sair
-        </button>
+        <div className="flex items-center gap-3">
+          {!isOnline && <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-300">Offline</span>}
+          {pendingSync > 0 && (
+            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs text-amber-300">{pendingSync} pendente(s)</span>
+          )}
+          <button onClick={logout} className="text-xs text-slate-400 underline">
+            Sair
+          </button>
+        </div>
       </header>
 
       <main className="flex flex-1 flex-col items-center justify-center px-6 pb-16">
-        {step === "home" && (
+        {step === "loading" && <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-600 border-t-emerald-400" />}
+
+        {step === "home" && !round && (
           <div className="w-full max-w-sm text-center">
-            <div className="mb-8">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-3xl">
-                📍
-              </div>
+            <div className="mb-6">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-3xl">📍</div>
               <h1 className="text-xl font-semibold">Iniciar Ronda</h1>
-              <p className="mt-1 text-sm text-slate-400">
-                Aponte a câmera para o QR Code do ponto de inspeção
-              </p>
+              <p className="mt-1 text-sm text-slate-400">Escolha a usina e, se houver, a rota planejada</p>
             </div>
+
+            <div className="space-y-3 text-left">
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">Usina</label>
+                <select
+                  value={selectedPlantId}
+                  onChange={(e) => setSelectedPlantId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                >
+                  {plants.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">Rota (opcional)</label>
+                <select
+                  value={selectedRouteId}
+                  onChange={(e) => setSelectedRouteId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                >
+                  <option value="">Ronda livre (sem rota)</option>
+                  {routes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} ({r.points.length} pontos)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={startRound}
+              disabled={!selectedPlantId}
+              className="mt-6 w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-white shadow-lg transition hover:bg-emerald-400 disabled:opacity-50"
+            >
+              Iniciar Ronda
+            </button>
+          </div>
+        )}
+
+        {step === "home" && round && (
+          <div className="w-full max-w-sm">
+            <div className="mb-4 text-center">
+              <p className="text-xs text-slate-400">{round.route ? round.route.name : "Ronda livre"}</p>
+              <h1 className="text-xl font-semibold">Ronda em andamento</h1>
+            </div>
+
             <button
               onClick={() => setStep("scanning")}
               className="w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-white shadow-lg transition hover:bg-emerald-400"
             >
               Ler QR Code
             </button>
+
+            {round.route && (
+              <div className="mt-5 space-y-1.5">
+                <p className="text-xs text-slate-400">Pontos da rota</p>
+                {round.route.points.map((p) => (
+                  <div
+                    key={p.equipmentId}
+                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${
+                      visitedIds.has(p.equipmentId) ? "bg-emerald-500/10 text-emerald-300" : "bg-white/5 text-slate-300"
+                    }`}
+                  >
+                    <span>{visitedIds.has(p.equipmentId) ? "✓" : "○"}</span>
+                    <span>
+                      {p.equipment.name} ({p.equipment.code})
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-6 flex gap-2">
+              <button
+                onClick={() => setStep("occurrence")}
+                className="flex-1 rounded-xl border border-slate-600 py-3 text-sm text-slate-200"
+              >
+                Registrar Ocorrência
+              </button>
+              <button onClick={endRound} className="flex-1 rounded-xl border border-red-500/50 py-3 text-sm text-red-300">
+                Encerrar Ronda
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "ending" && (
+          <div className="text-center">
+            <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-600 border-t-emerald-400" />
+            <p className="text-sm text-slate-300">Encerrando ronda...</p>
           </div>
         )}
 
@@ -209,23 +426,43 @@ function ScanPageInner() {
               <Row
                 label="Localização"
                 value={
-                  result.distanceFlag === "ok"
-                    ? "OK"
-                    : result.distanceFlag === "attention"
-                      ? "Atenção — distância do ponto"
-                      : result.distanceFlag === "inconsistent"
-                        ? "Inconsistente — muito distante do ponto"
-                        : "Não avaliada"
+                  result.distanceFlag === null
+                    ? "Será validada ao sincronizar (offline)"
+                    : result.distanceFlag === "ok"
+                      ? "OK"
+                      : result.distanceFlag === "attention"
+                        ? "Atenção — distância do ponto"
+                        : "Inconsistente — muito distante do ponto"
                 }
               />
             </dl>
-            <button
-              onClick={reset}
-              className="mt-6 w-full rounded-xl bg-slate-900 py-3 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              Ler próximo QR Code
-            </button>
+            <div className="mt-6 flex gap-2">
+              <button
+                onClick={() => setStep("occurrence")}
+                className="flex-1 rounded-xl border border-slate-300 py-3 text-sm font-medium text-slate-700"
+              >
+                Registrar Ocorrência
+              </button>
+              <button
+                onClick={reset}
+                className="flex-1 rounded-xl bg-slate-900 py-3 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                Próximo QR Code
+              </button>
+            </div>
           </div>
+        )}
+
+        {step === "occurrence" && round && (
+          <OccurrenceForm
+            plantId={round.plantId}
+            equipmentId={equipment?.id}
+            onCancel={() => setStep(equipment && result ? "done" : "home")}
+            onDone={() => {
+              setStep("home");
+              router.replace("/scan");
+            }}
+          />
         )}
 
         {step === "error" && (

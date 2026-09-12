@@ -3,8 +3,28 @@ import { verifySessionToken } from "@/lib/auth";
 
 const PUBLIC_PATHS = ["/login", "/api/auth/login"];
 
+// Only ADMIN may pass.
 const ADMIN_ONLY_PREFIXES = ["/admin/users", "/api/users"];
-const BACK_OFFICE_PREFIXES = ["/admin", "/api/plants", "/api/equipment", "/api/reports", "/api/dashboard", "/api/scans"];
+
+// Pages under /admin are back-office only; a VIGILANTE is redirected home.
+const BACK_OFFICE_PAGE_PREFIXES = ["/admin"];
+
+// API prefixes a VIGILANTE may always use (their own field-work endpoints).
+const VIGILANTE_API_ALLOWLIST = [
+  "/api/auth",
+  "/api/scans",
+  "/api/qr",
+  "/api/qrcodes",
+  "/api/rounds",
+  "/api/occurrences",
+  "/api/uploads",
+];
+
+// Everything else under /api is back-office (blocked for VIGILANTE) unless allowlisted above.
+const BACK_OFFICE_API_PREFIXES = ["/api/equipment", "/api/reports", "/api/dashboard", "/api/alerts"];
+
+// A VIGILANTE may only GET these (e.g. to pick a usina/route when starting a round) — no writes.
+const VIGILANTE_READ_ONLY_PREFIXES = ["/api/routes", "/api/plants"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -25,22 +45,23 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  const deny = () =>
+    pathname.startsWith("/api")
+      ? NextResponse.json({ error: "Acesso negado" }, { status: 403 })
+      : NextResponse.redirect(new URL("/", request.url));
+
   if (ADMIN_ONLY_PREFIXES.some((p) => pathname.startsWith(p)) && session.role !== "ADMIN") {
-    if (pathname.startsWith("/api")) {
-      return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-    }
-    return NextResponse.redirect(new URL("/", request.url));
+    return deny();
   }
 
-  if (
-    BACK_OFFICE_PREFIXES.some((p) => pathname.startsWith(p)) &&
-    session.role === "VIGILANTE" &&
-    !pathname.startsWith("/api/scans")
-  ) {
-    if (pathname.startsWith("/api")) {
-      return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  if (session.role === "VIGILANTE") {
+    if (BACK_OFFICE_PAGE_PREFIXES.some((p) => pathname.startsWith(p))) return deny();
+    if (BACK_OFFICE_API_PREFIXES.some((p) => pathname.startsWith(p)) && !VIGILANTE_API_ALLOWLIST.some((p) => pathname.startsWith(p))) {
+      return deny();
     }
-    return NextResponse.redirect(new URL("/", request.url));
+    if (VIGILANTE_READ_ONLY_PREFIXES.some((p) => pathname.startsWith(p)) && request.method !== "GET") {
+      return deny();
+    }
   }
 
   const response = NextResponse.next();

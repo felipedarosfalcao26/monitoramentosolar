@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { classifyDistance, haversineDistanceMeters } from "@/lib/geo";
+import { createAlert } from "@/lib/alerts";
 
 const createScanSchema = z.object({
   qrToken: z.string().min(1),
@@ -11,6 +12,9 @@ const createScanSchema = z.object({
   accuracyMeters: z.number().nonnegative().optional(),
   deviceInfo: z.string().optional(),
   notes: z.string().optional(),
+  photoUrl: z.string().optional(),
+  roundId: z.string().optional(),
+  offlineCreatedAt: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -37,7 +41,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Este QR Code foi invalidado" }, { status: 410 });
   }
 
-  const { latitude, longitude, accuracyMeters, deviceInfo, notes } = parsed.data;
+  const { latitude, longitude, accuracyMeters, deviceInfo, notes, photoUrl, roundId, offlineCreatedAt } = parsed.data;
+
+  let validatedRoundId: string | undefined;
+  if (roundId) {
+    const round = await prisma.round.findUnique({ where: { id: roundId } });
+    if (round && round.userId === session.sub && round.status === "IN_PROGRESS") {
+      validatedRoundId = round.id;
+    }
+  }
+
   const distanceFromEquipmentM = haversineDistanceMeters(
     latitude,
     longitude,
@@ -53,17 +66,31 @@ export async function POST(request: NextRequest) {
       userId: session.sub,
       plantId: qrCode.equipment.plantId,
       equipmentId: qrCode.equipmentId,
+      roundId: validatedRoundId,
       qrToken: qrCode.token,
       latitude,
       longitude,
       accuracyMeters,
       deviceInfo,
       notes,
+      photoUrl,
       distanceFromEquipmentM,
       distanceFlag,
+      offlineCreatedAt: offlineCreatedAt ? new Date(offlineCreatedAt) : undefined,
+      syncedAt: offlineCreatedAt ? new Date() : undefined,
     },
     include: { equipment: true, plant: true },
   });
+
+  if (distanceFlag === "inconsistent") {
+    await createAlert({
+      plantId: scan.plantId,
+      roundId: validatedRoundId,
+      type: "LEITURA_INCONSISTENTE",
+      severity: "ALTA",
+      message: `Leitura de "${qrCode.equipment.name}" registrada a ${Math.round(distanceFromEquipmentM)}m do ponto cadastrado.`,
+    });
+  }
 
   return NextResponse.json({ scan }, { status: 201 });
 }

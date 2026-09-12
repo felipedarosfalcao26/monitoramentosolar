@@ -53,23 +53,41 @@ async function main() {
     { code: "PORT-02", name: "Portão Secundário", type: "Portão", latOffset: 0.0005, lonOffset: 0.002 },
   ];
 
+  const createdEquipment: { id: string; code: string }[] = [];
   for (const eq of equipmentSeeds) {
-    const existing = await prisma.equipment.findUnique({
+    let equipment = await prisma.equipment.findUnique({
       where: { plantId_code: { plantId: plant.id, code: eq.code } },
     });
-    if (existing) continue;
+    if (!equipment) {
+      equipment = await prisma.equipment.create({
+        data: {
+          plantId: plant.id,
+          code: eq.code,
+          name: eq.name,
+          type: eq.type,
+          latitude: plant.latitude + eq.latOffset,
+          longitude: plant.longitude + eq.lonOffset,
+        },
+      });
+      await prisma.qrCode.create({ data: { equipmentId: equipment.id, token: randomUUID() } });
+    }
+    createdEquipment.push({ id: equipment.id, code: equipment.code });
+  }
 
-    const equipment = await prisma.equipment.create({
+  const existingRoute = await prisma.inspectionRoute.findFirst({ where: { plantId: plant.id, name: "Rota Noturna A" } });
+  if (!existingRoute) {
+    await prisma.inspectionRoute.create({
       data: {
         plantId: plant.id,
-        code: eq.code,
-        name: eq.name,
-        type: eq.type,
-        latitude: plant.latitude + eq.latOffset,
-        longitude: plant.longitude + eq.lonOffset,
+        name: "Rota Noturna A",
+        shift: "NOITE",
+        daysOfWeek: "0,1,2,3,4,5,6",
+        toleranceMinutes: 30,
+        points: {
+          create: createdEquipment.map((eq, i) => ({ equipmentId: eq.id, order: i + 1 })),
+        },
       },
     });
-    await prisma.qrCode.create({ data: { equipmentId: equipment.id, token: randomUUID() } });
   }
 
   console.log("Seed concluído.");
