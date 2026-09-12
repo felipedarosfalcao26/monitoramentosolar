@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vistoria-solar-dev",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set PATH=%LOCALAPPDATA%\\Programs\\nodejs-lts;%LOCALAPPDATA%\\Programs\\mingit\\cmd;%PATH% && npm run dev"],
+      "port": 3000
+    }
+  ]
+}

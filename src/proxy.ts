@@ -6,7 +6,7 @@ const PUBLIC_PATHS = ["/login", "/api/auth/login"];
 const ADMIN_ONLY_PREFIXES = ["/admin/users", "/api/users"];
 const BACK_OFFICE_PREFIXES = ["/admin", "/api/plants", "/api/equipment", "/api/reports", "/api/dashboard", "/api/scans"];
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next") || pathname.startsWith("/manifest")) {
