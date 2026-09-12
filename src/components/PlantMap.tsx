@@ -22,7 +22,7 @@ export type MapScan = {
   equipmentName: string;
   userName: string;
   distanceFlag: string | null;
-  photoUrl?: string | null;
+  photoUrls?: string[];
   notes?: string | null;
 };
 
@@ -125,13 +125,18 @@ export default function PlantMap({
                   <em>{s.notes}</em>
                 </>
               )}
-              {s.photoUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={s.photoUrl}
-                  alt="Foto do registro"
-                  style={{ marginTop: 6, width: "100%", maxWidth: 200, borderRadius: 6 }}
-                />
+              {s.photoUrls && s.photoUrls.length > 0 && (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={s.photoUrls[0]}
+                    alt="Foto do registro"
+                    style={{ marginTop: 6, width: "100%", maxWidth: 200, borderRadius: 6 }}
+                  />
+                  {s.photoUrls.length > 1 && (
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>+{s.photoUrls.length - 1} foto(s)</div>
+                  )}
+                </>
               )}
             </div>
           </Popup>

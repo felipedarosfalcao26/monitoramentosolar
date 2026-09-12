@@ -13,6 +13,7 @@ const createScanSchema = z.object({
   deviceInfo: z.string().optional(),
   notes: z.string().optional(),
   photoUrl: z.string().optional(),
+  photoUrls: z.array(z.string()).optional(),
   roundId: z.string().optional(),
   offlineCreatedAt: z.string().optional(),
 });
@@ -41,7 +42,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Este QR Code foi invalidado" }, { status: 410 });
   }
 
-  const { latitude, longitude, accuracyMeters, deviceInfo, notes, photoUrl, roundId, offlineCreatedAt } = parsed.data;
+  const { latitude, longitude, accuracyMeters, deviceInfo, notes, roundId, offlineCreatedAt } = parsed.data;
+  const photoUrls = parsed.data.photoUrls ?? (parsed.data.photoUrl ? [parsed.data.photoUrl] : []);
 
   let validatedRoundId: string | undefined;
   if (roundId) {
@@ -73,7 +75,8 @@ export async function POST(request: NextRequest) {
       accuracyMeters,
       deviceInfo,
       notes,
-      photoUrl,
+      photoUrls,
+      photoUrl: photoUrls[0] ?? null,
       distanceFromEquipmentM,
       distanceFlag,
       offlineCreatedAt: offlineCreatedAt ? new Date(offlineCreatedAt) : undefined,

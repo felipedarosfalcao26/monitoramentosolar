@@ -32,18 +32,30 @@ export async function POST(request: NextRequest) {
 
   const filename = `${randomUUID()}.${extension}`;
 
-  // Production (Vercel): store in Vercel Blob — the app's own filesystem there
-  // is read-only and nothing written to it would survive past the request.
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const blob = await put(`uploads/${filename}`, file, { access: "public" });
-    return NextResponse.json({ url: blob.url }, { status: 201 });
+  try {
+    // Production (Vercel): store in Vercel Blob — the app's own filesystem there
+    // is read-only and nothing written to it would survive past the request.
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      const blob = await put(`uploads/${filename}`, file, { access: "public" });
+      return NextResponse.json({ url: blob.url }, { status: 201 });
+    }
+
+    if (process.env.VERCEL) {
+      return NextResponse.json(
+        { error: "Armazenamento de fotos não configurado. Ative o Vercel Blob em Storage → Create Database → Blob." },
+        { status: 500 }
+      );
+    }
+
+    // Local dev fallback: plain disk write under public/uploads, no token needed.
+    const uploadsDir = path.join(process.cwd(), "public", "uploads");
+    await mkdir(uploadsDir, { recursive: true });
+    const buffer = Buffer.from(await file.arrayBuffer());
+    await writeFile(path.join(uploadsDir, filename), buffer);
+
+    return NextResponse.json({ url: `/uploads/${filename}` }, { status: 201 });
+  } catch (err) {
+    console.error("upload failed", err);
+    return NextResponse.json({ error: "Falha ao salvar a foto. Tente novamente." }, { status: 500 });
   }
-
-  // Local dev fallback: plain disk write under public/uploads, no token needed.
-  const uploadsDir = path.join(process.cwd(), "public", "uploads");
-  await mkdir(uploadsDir, { recursive: true });
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(path.join(uploadsDir, filename), buffer);
-
-  return NextResponse.json({ url: `/uploads/${filename}` }, { status: 201 });
 }

@@ -16,6 +16,7 @@ type Scan = {
   distanceFlag: string | null;
   equipmentId: string;
   photoUrl: string | null;
+  photoUrls: string[];
   notes: string | null;
   equipment: { name: string };
   user: { name: string };
@@ -75,7 +76,7 @@ export default function MapPage() {
     equipmentName: s.equipment.name,
     userName: s.user.name,
     distanceFlag: s.distanceFlag,
-    photoUrl: s.photoUrl,
+    photoUrls: s.photoUrls?.length ? s.photoUrls : s.photoUrl ? [s.photoUrl] : [],
     notes: s.notes,
   }));
 

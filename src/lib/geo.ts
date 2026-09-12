@@ -37,8 +37,8 @@ export function pathDistanceMeters(points: { latitude: number; longitude: number
 }
 
 export function classifyDistance(distanceMeters: number): DistanceFlag {
-  const okLimit = Number(process.env.GEO_TOLERANCE_OK_METERS ?? 20);
-  const attentionLimit = Number(process.env.GEO_TOLERANCE_ATTENTION_METERS ?? 50);
+  const okLimit = Number(process.env.GEO_TOLERANCE_OK_METERS ?? 50);
+  const attentionLimit = Number(process.env.GEO_TOLERANCE_ATTENTION_METERS ?? 100);
   if (distanceMeters <= okLimit) return "ok";
   if (distanceMeters <= attentionLimit) return "attention";
   return "inconsistent";

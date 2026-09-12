@@ -18,6 +18,7 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showResetInfo, setShowResetInfo] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -90,6 +91,20 @@ function LoginForm() {
           >
             {loading ? "Entrando..." : "Entrar"}
           </button>
+
+          <button
+            type="button"
+            onClick={() => setShowResetInfo((v) => !v)}
+            className="w-full text-center text-xs text-slate-500 underline"
+          >
+            Esqueci minha senha
+          </button>
+          {showResetInfo && (
+            <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+              Por segurança, a redefinição de senha é feita por um administrador. Entre em contato com o administrador do
+              sistema informando seu e-mail de acesso para que ele redefina sua senha em <strong>Usuários</strong>.
+            </p>
+          )}
         </form>
       </div>
     </div>

@@ -8,6 +8,7 @@ type Occurrence = {
   severity: string;
   description: string | null;
   photoUrl: string | null;
+  photoUrls: string[];
   status: string;
   createdAt: string;
   user: { name: string };
@@ -101,10 +102,17 @@ export default function OccurrencesPage() {
               {o.equipment ? ` · ${o.equipment.name} (${o.equipment.code})` : ""}
             </p>
             {o.description && <p className="mt-2 text-sm text-slate-700">{o.description}</p>}
-            {o.photoUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={o.photoUrl} alt="Foto da ocorrência" className="mt-2 h-32 w-full rounded-lg object-cover" />
-            )}
+            {(() => {
+              const photos = o.photoUrls?.length ? o.photoUrls : o.photoUrl ? [o.photoUrl] : [];
+              return photos.length > 0 ? (
+                <div className={`mt-2 grid gap-1.5 ${photos.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                  {photos.map((url, i) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={i} src={url} alt="Foto da ocorrência" className="h-28 w-full rounded-lg object-cover" />
+                  ))}
+                </div>
+              ) : null;
+            })()}
             <p className="mt-2 text-xs text-slate-400">Registrado por {o.user.name}</p>
             <select
               value={o.status}

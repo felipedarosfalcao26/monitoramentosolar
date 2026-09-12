@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { generateInspectionReportPdf } from "@/lib/pdfReport";
 import ScanDetailModal from "@/components/ScanDetailModal";
+import ManualScanForm from "@/components/ManualScanForm";
 
 type Plant = { id: string; name: string };
 type EquipmentOption = { id: string; name: string; code: string; latitude: number; longitude: number };
@@ -17,6 +18,7 @@ type Scan = {
   distanceFromEquipmentM: number | null;
   notes: string | null;
   photoUrl: string | null;
+  photoUrls: string[];
   user: { id: string; name: string };
   equipment: { id: string; name: string; code: string };
   plant: { name: string };
@@ -72,6 +74,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [selectedScan, setSelectedScan] = useState<Scan | null>(null);
+  const [showManualForm, setShowManualForm] = useState(false);
 
   useEffect(() => {
     fetch("/api/plants")
@@ -82,7 +85,7 @@ export default function ReportsPage() {
       });
     fetch("/api/users")
       .then((r) => r.json())
-      .then((d) => setUserOptions((d.users ?? []).filter((u: UserOption) => u.role === "VIGILANTE")))
+      .then((d) => setUserOptions(d.users ?? []))
       .catch(() => {});
   }, []);
 
@@ -165,7 +168,8 @@ export default function ReportsPage() {
           equipmentName: s.equipment.name,
           equipmentCode: s.equipment.code,
           notes: s.notes,
-          photoUrl: s.photoUrl,
+          photoUrl: (s.photoUrls?.[0] ?? s.photoUrl) || null,
+          photoUrls: s.photoUrls?.length ? s.photoUrls : s.photoUrl ? [s.photoUrl] : [],
         })),
         rounds: (roundsData.rounds ?? []).map(
           (r: {
@@ -213,11 +217,21 @@ export default function ReportsPage() {
     }
   }
 
+  const vigilantes = userOptions.filter((u) => u.role === "VIGILANTE");
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">Relatórios</h1>
-        <p className="text-sm text-slate-500">Filtre por usina, período, vigilante e equipamento</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">Relatórios e Registros</h1>
+          <p className="text-sm text-slate-500">Filtre, exporte, e ajuste registros manualmente quando necessário</p>
+        </div>
+        <button
+          onClick={() => setShowManualForm(true)}
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+        >
+          + Registro manual
+        </button>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -236,7 +250,7 @@ export default function ReportsPage() {
           <label className="mb-1 block text-xs font-medium text-slate-600">Vigilante</label>
           <select value={userId} onChange={(e) => setUserId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
             <option value="">Todos</option>
-            {userOptions.map((u) => (
+            {vigilantes.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name}
               </option>
@@ -293,38 +307,48 @@ export default function ReportsPage() {
               <th className="px-4 py-3">Distância</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Observações</th>
-              <th className="px-4 py-3">Foto</th>
+              <th className="px-4 py-3">Fotos</th>
             </tr>
           </thead>
           <tbody>
-            {scans.map((s) => (
-              <tr
-                key={s.id}
-                onClick={() => setSelectedScan(s)}
-                className="cursor-pointer border-b border-slate-50 hover:bg-slate-50"
-              >
-                <td className="px-4 py-3 whitespace-nowrap">{new Date(s.scannedAt).toLocaleString("pt-BR")}</td>
-                <td className="px-4 py-3">{s.user.name}</td>
-                <td className="px-4 py-3">{s.plant.name}</td>
-                <td className="px-4 py-3">
-                  {s.equipment.name} ({s.equipment.code})
-                </td>
-                <td className="px-4 py-3">{s.accuracyMeters ? `${s.accuracyMeters.toFixed(0)} m` : "—"}</td>
-                <td className="px-4 py-3">{s.distanceFromEquipmentM ? `${s.distanceFromEquipmentM.toFixed(0)} m` : "—"}</td>
-                <td className="px-4 py-3">{FLAG_LABEL[s.distanceFlag ?? "ok"]}</td>
-                <td className="max-w-[200px] px-4 py-3 truncate" title={s.notes ?? ""}>
-                  {s.notes ?? "—"}
-                </td>
-                <td className="px-4 py-3">
-                  {s.photoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={s.photoUrl} alt="Foto do registro" className="h-10 w-10 rounded object-cover" />
-                  ) : (
-                    "—"
-                  )}
-                </td>
-              </tr>
-            ))}
+            {scans.map((s) => {
+              const photos = s.photoUrls?.length ? s.photoUrls : s.photoUrl ? [s.photoUrl] : [];
+              return (
+                <tr
+                  key={s.id}
+                  onClick={() => setSelectedScan(s)}
+                  className="cursor-pointer border-b border-slate-50 hover:bg-slate-50"
+                >
+                  <td className="px-4 py-3 whitespace-nowrap">{new Date(s.scannedAt).toLocaleString("pt-BR")}</td>
+                  <td className="px-4 py-3">{s.user.name}</td>
+                  <td className="px-4 py-3">{s.plant.name}</td>
+                  <td className="px-4 py-3">
+                    {s.equipment.name} ({s.equipment.code})
+                  </td>
+                  <td className="px-4 py-3">{s.accuracyMeters ? `${s.accuracyMeters.toFixed(0)} m` : "—"}</td>
+                  <td className="px-4 py-3">{s.distanceFromEquipmentM ? `${s.distanceFromEquipmentM.toFixed(0)} m` : "—"}</td>
+                  <td className="px-4 py-3">{FLAG_LABEL[s.distanceFlag ?? "ok"]}</td>
+                  <td className="max-w-[200px] px-4 py-3 truncate" title={s.notes ?? ""}>
+                    {s.notes ?? "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    {photos.length > 0 ? (
+                      <div className="relative inline-block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={photos[0]} alt="Foto do registro" className="h-10 w-10 rounded object-cover" />
+                        {photos.length > 1 && (
+                          <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-[9px] font-medium text-white">
+                            {photos.length}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
             {scans.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
@@ -336,7 +360,26 @@ export default function ReportsPage() {
         </table>
       </div>
 
-      {selectedScan && <ScanDetailModal scan={selectedScan} onClose={() => setSelectedScan(null)} />}
+      {selectedScan && (
+        <ScanDetailModal
+          scan={selectedScan}
+          canManage
+          onClose={() => setSelectedScan(null)}
+          onChanged={runReport}
+        />
+      )}
+
+      {showManualForm && (
+        <ManualScanForm
+          plants={plants}
+          vigilantes={vigilantes}
+          onClose={() => setShowManualForm(false)}
+          onCreated={() => {
+            setShowManualForm(false);
+            runReport();
+          }}
+        />
+      )}
     </div>
   );
 }

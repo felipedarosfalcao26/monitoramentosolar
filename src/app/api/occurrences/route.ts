@@ -60,6 +60,7 @@ const createOccurrenceSchema = z.object({
   severity: z.enum(["BAIXA", "MEDIA", "ALTA", "CRITICA"]).default("MEDIA"),
   description: z.string().optional(),
   photoUrl: z.string().optional(),
+  photoUrls: z.array(z.string()).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -72,8 +73,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Dados inválidos" }, { status: 400 });
   }
 
+  const { photoUrl: _legacyPhotoUrl, photoUrls: rawPhotoUrls, ...rest } = parsed.data;
+  const photoUrls = rawPhotoUrls ?? (_legacyPhotoUrl ? [_legacyPhotoUrl] : []);
+
   const occurrence = await prisma.occurrence.create({
-    data: { ...parsed.data, userId: session.sub },
+    data: { ...rest, photoUrls, photoUrl: photoUrls[0] ?? null, userId: session.sub },
     include: { equipment: { select: { name: true } } },
   });
 

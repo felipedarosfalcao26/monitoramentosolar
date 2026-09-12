@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { uploadPhoto } from "@/lib/uploadPhoto";
+import { uploadPhotos } from "@/lib/uploadPhoto";
+import MultiPhotoInput from "@/components/MultiPhotoInput";
 
 const CATEGORIES: { value: string; label: string }[] = [
   { value: "PORTAO_ABERTO", label: "Portão aberto" },
@@ -32,7 +33,7 @@ export default function OccurrenceForm({
   const [category, setCategory] = useState("OUTRO");
   const [severity, setSeverity] = useState("MEDIA");
   const [description, setDescription] = useState("");
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,20 +42,16 @@ export default function OccurrenceForm({
     setSaving(true);
     setError(null);
     try {
-      let photoUrl: string | undefined;
-      if (photoFile) {
-        const url = await uploadPhoto(photoFile);
-        if (!url) {
-          setError("Falha ao enviar a foto. Tente novamente.");
-          return;
-        }
-        photoUrl = url;
+      const { urls: photoUrls, error: uploadError } = await uploadPhotos(photoFiles);
+      if (uploadError) {
+        setError(uploadError);
+        return;
       }
 
       const res = await fetch("/api/occurrences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plantId, equipmentId, scanId, category, severity, description, photoUrl }),
+        body: JSON.stringify({ plantId, equipmentId, scanId, category, severity, description, photoUrls }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -104,14 +101,8 @@ export default function OccurrenceForm({
       </div>
 
       <div>
-        <label className="mb-1 block text-xs font-medium text-slate-600">Foto (opcional)</label>
-        <input
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
-          className="w-full text-sm"
-        />
+        <label className="mb-1 block text-xs font-medium text-slate-600">Fotos (opcional)</label>
+        <MultiPhotoInput files={photoFiles} onChange={setPhotoFiles} />
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}

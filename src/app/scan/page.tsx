@@ -4,10 +4,14 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import OccurrenceForm from "@/components/OccurrenceForm";
-import { uploadPhoto } from "@/lib/uploadPhoto";
+import MultiPhotoInput from "@/components/MultiPhotoInput";
+import { uploadPhotos } from "@/lib/uploadPhoto";
 import { flushPendingScans, listPendingScans, queueScan } from "@/lib/offlineQueue";
 
 const QrScanner = dynamic(() => import("@/components/QrScanner"), { ssr: false });
+
+const LAST_PLANT_KEY = "vistoria-solar:last-plant-id";
+const LAST_ROUTE_KEY = "vistoria-solar:last-route-id";
 
 type Plant = { id: string; name: string };
 type RoutePoint = { equipmentId: string; order: number; equipment: { id: string; name: string; code: string } };
@@ -23,6 +27,7 @@ type Equipment = { id: string; code: string; name: string; type: string; plant: 
 
 type Step =
   | "loading"
+  | "starting"
   | "home"
   | "scanning"
   | "resolving"
@@ -72,8 +77,7 @@ function ScanPageInner() {
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [reading, setReading] = useState<PendingReading | null>(null);
   const [notes, setNotes] = useState("");
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingSync, setPendingSync] = useState(0);
@@ -88,33 +92,80 @@ function ScanPageInner() {
     if (synced > 0) refreshPendingCount();
   }, [refreshPendingCount]);
 
+  const startRound = useCallback(async (plantId: string, routeId?: string) => {
+    const res = await fetch("/api/rounds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plantId, routeId: routeId || undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (data.round) {
+        // already had one in progress — just adopt it
+        const detail = await fetch(`/api/rounds/${data.round.id}`).then((r) => r.json());
+        setRound(detail.round);
+        setStep("home");
+        return;
+      }
+      setError(data.error ?? "Não foi possível iniciar a ronda");
+      setStep("error");
+      return;
+    }
+    try {
+      localStorage.setItem(LAST_PLANT_KEY, plantId);
+      if (routeId) localStorage.setItem(LAST_ROUTE_KEY, routeId);
+      else localStorage.removeItem(LAST_ROUTE_KEY);
+    } catch {
+      // localStorage unavailable — not critical
+    }
+    const detail = await fetch(`/api/rounds/${data.round.id}`).then((r) => r.json());
+    setRound(detail.round);
+    setStep("home");
+  }, []);
+
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => setUserName(d.user?.name ?? ""));
 
-    fetch("/api/rounds")
-      .then((r) => r.json())
-      .then((d) => {
-        const active = (d.rounds ?? []).find((r: { status: string }) => r.status === "IN_PROGRESS");
+    Promise.all([fetch("/api/rounds").then((r) => r.json()), fetch("/api/plants").then((r) => r.json())]).then(
+      async ([roundsData, plantsData]) => {
+        setPlants(plantsData.plants ?? []);
+        const active = (roundsData.rounds ?? []).find((r: { status: string }) => r.status === "IN_PROGRESS");
         if (active) {
-          fetch(`/api/rounds/${active.id}`)
-            .then((r) => r.json())
-            .then((detail) => {
-              setRound(detail.round);
-              setStep("home");
-            });
+          const detail = await fetch(`/api/rounds/${active.id}`).then((r) => r.json());
+          setRound(detail.round);
+          setStep("home");
+          return;
+        }
+
+        // No round in progress: start one automatically. Prefer the vigilante's
+        // last-used usina/rota; otherwise fall back to the only plant if there's
+        // just one, or ask (first time / multiple usinas) via the picker below.
+        const availablePlants: Plant[] = plantsData.plants ?? [];
+        let lastPlantId: string | null = null;
+        let lastRouteId: string | null = null;
+        try {
+          lastPlantId = localStorage.getItem(LAST_PLANT_KEY);
+          lastRouteId = localStorage.getItem(LAST_ROUTE_KEY);
+        } catch {
+          // ignore
+        }
+
+        const plantToUse =
+          (lastPlantId && availablePlants.find((p) => p.id === lastPlantId)?.id) ||
+          (availablePlants.length === 1 ? availablePlants[0].id : null);
+
+        if (plantToUse) {
+          setSelectedPlantId(plantToUse);
+          setStep("starting");
+          await startRound(plantToUse, lastRouteId ?? undefined);
         } else {
+          if (availablePlants[0]) setSelectedPlantId(availablePlants[0].id);
           setStep("home");
         }
-      });
-
-    fetch("/api/plants")
-      .then((r) => r.json())
-      .then((d) => {
-        setPlants(d.plants ?? []);
-        if (d.plants?.[0]) setSelectedPlantId(d.plants[0].id);
-      });
+      }
+    );
 
     refreshPendingCount();
     setIsOnline(navigator.onLine);
@@ -140,32 +191,6 @@ function ScanPageInner() {
       .then((d) => setRoutes((d.routes ?? []).filter((r: { active: boolean }) => r.active)));
   }, [selectedPlantId]);
 
-  useEffect(() => {
-    if (!photoFile) {
-      setPhotoPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(photoFile);
-    setPhotoPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [photoFile]);
-
-  async function startRound() {
-    const res = await fetch("/api/rounds", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plantId: selectedPlantId, routeId: selectedRouteId || undefined }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error ?? "Não foi possível iniciar a ronda");
-      setStep("error");
-      return;
-    }
-    const detail = await fetch(`/api/rounds/${data.round.id}`).then((r) => r.json());
-    setRound(detail.round);
-  }
-
   async function endRound() {
     if (!round) return;
     setStep("ending");
@@ -184,7 +209,7 @@ function ScanPageInner() {
     setReading(null);
     setResult(null);
     setNotes("");
-    setPhotoFile(null);
+    setPhotoFiles([]);
   }
 
   const processToken = useCallback(async (token: string) => {
@@ -234,10 +259,11 @@ function ScanPageInner() {
     if (!reading || !equipment) return;
     setStep("submitting");
 
-    let photoUrl: string | undefined;
-    if (photoFile) {
-      const uploaded = await uploadPhoto(photoFile);
-      if (uploaded) photoUrl = uploaded;
+    const { urls: photoUrls, error: uploadError } = await uploadPhotos(photoFiles);
+    if (uploadError) {
+      setError(uploadError);
+      setStep("error");
+      return;
     }
 
     const payload = {
@@ -248,7 +274,7 @@ function ScanPageInner() {
       deviceInfo: navigator.userAgent,
       roundId: round?.id,
       notes: notes || undefined,
-      photoUrl,
+      photoUrls,
     };
 
     if (!navigator.onLine) {
@@ -306,38 +332,57 @@ function ScanPageInner() {
   }
 
   async function logout() {
+    if (round) {
+      await fetch(`/api/rounds/${round.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "end" }),
+      });
+    }
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
     router.refresh();
   }
 
   const visitedIds = new Set(round?.scans.map((s) => s.equipmentId) ?? []);
+  const totalPoints = round?.route?.points.length ?? 0;
+  const visitedCount = round?.route ? round.route.points.filter((p) => visitedIds.has(p.equipmentId)).length : round?.scans.length ?? 0;
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-900 text-white">
+    <div className="flex min-h-screen flex-col bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 text-white">
       <header className="flex items-center justify-between px-5 py-4">
-        <div>
-          <p className="text-xs text-slate-400">Vigilante</p>
-          <p className="text-sm font-medium">{userName || "..."}</p>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/20 text-lg">👷</div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-slate-400">Vigilante</p>
+            <p className="text-sm font-medium leading-tight">{userName || "..."}</p>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {!isOnline && <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-300">Offline</span>}
+        <div className="flex items-center gap-2">
+          {!isOnline && <span className="rounded-full bg-red-500/20 px-2 py-1 text-[11px] font-medium text-red-300">Offline</span>}
           {pendingSync > 0 && (
-            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs text-amber-300">{pendingSync} pendente(s)</span>
+            <span className="rounded-full bg-amber-500/20 px-2 py-1 text-[11px] font-medium text-amber-300">
+              {pendingSync} pendente(s)
+            </span>
           )}
-          <button onClick={logout} className="text-xs text-slate-400 underline">
+          <button onClick={logout} className="rounded-full bg-white/5 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/10">
             Sair
           </button>
         </div>
       </header>
 
-      <main className="flex flex-1 flex-col items-center justify-center px-6 pb-16">
-        {step === "loading" && <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-600 border-t-emerald-400" />}
+      <main className="flex flex-1 flex-col items-center justify-center px-5 pb-16">
+        {(step === "loading" || step === "starting") && (
+          <div className="text-center">
+            <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-emerald-400" />
+            <p className="text-sm text-slate-400">{step === "starting" ? "Iniciando sua ronda..." : "Carregando..."}</p>
+          </div>
+        )}
 
         {step === "home" && !round && (
           <div className="w-full max-w-sm text-center">
             <div className="mb-6">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-3xl">📍</div>
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/15 text-3xl">📍</div>
               <h1 className="text-xl font-semibold">Iniciar Ronda</h1>
               <p className="mt-1 text-sm text-slate-400">Escolha a usina e, se houver, a rota planejada</p>
             </div>
@@ -348,7 +393,7 @@ function ScanPageInner() {
                 <select
                   value={selectedPlantId}
                   onChange={(e) => setSelectedPlantId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-2.5 text-sm"
                 >
                   {plants.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -362,7 +407,7 @@ function ScanPageInner() {
                 <select
                   value={selectedRouteId}
                   onChange={(e) => setSelectedRouteId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-2.5 text-sm"
                 >
                   <option value="">Ronda livre (sem rota)</option>
                   {routes.map((r) => (
@@ -375,9 +420,9 @@ function ScanPageInner() {
             </div>
 
             <button
-              onClick={startRound}
+              onClick={() => startRound(selectedPlantId, selectedRouteId || undefined)}
               disabled={!selectedPlantId}
-              className="mt-6 w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-white shadow-lg transition hover:bg-emerald-400 disabled:opacity-50"
+              className="mt-6 w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400 disabled:opacity-50"
             >
               Iniciar Ronda
             </button>
@@ -386,20 +431,31 @@ function ScanPageInner() {
 
         {step === "home" && round && (
           <div className="w-full max-w-sm">
-            <div className="mb-4 text-center">
-              <p className="text-xs text-slate-400">{round.route ? round.route.name : "Ronda livre"}</p>
+            <div className="mb-5 text-center">
+              <p className="text-xs uppercase tracking-wide text-slate-400">{round.route ? round.route.name : "Ronda livre"}</p>
               <h1 className="text-xl font-semibold">Ronda em andamento</h1>
+              {round.route && (
+                <div className="mx-auto mt-3 h-1.5 w-full max-w-[220px] overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-emerald-400 transition-all"
+                    style={{ width: `${totalPoints > 0 ? (visitedCount / totalPoints) * 100 : 0}%` }}
+                  />
+                </div>
+              )}
+              <p className="mt-1 text-xs text-slate-500">
+                {round.route ? `${visitedCount} de ${totalPoints} pontos` : `${visitedCount} leitura(s) nesta ronda`}
+              </p>
             </div>
 
             <button
               onClick={() => setStep("scanning")}
-              className="w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-white shadow-lg transition hover:bg-emerald-400"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-6 py-5 text-lg font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400 active:scale-[0.98]"
             >
-              Ler QR Code
+              📷 Ler QR Code
             </button>
 
             {round.route && (
-              <div className="mt-5 space-y-1.5">
+              <div className="mt-5 max-h-[40vh] space-y-1.5 overflow-y-auto pr-1">
                 <p className="text-xs text-slate-400">Pontos da rota</p>
                 {round.route.points.map((p) => (
                   <div
@@ -420,11 +476,14 @@ function ScanPageInner() {
             <div className="mt-6 flex gap-2">
               <button
                 onClick={() => setStep("occurrence")}
-                className="flex-1 rounded-xl border border-slate-600 py-3 text-sm text-slate-200"
+                className="flex-1 rounded-xl border border-slate-600 py-3 text-sm text-slate-200 active:scale-[0.98]"
               >
-                Registrar Ocorrência
+                ⚠️ Ocorrência
               </button>
-              <button onClick={endRound} className="flex-1 rounded-xl border border-red-500/50 py-3 text-sm text-red-300">
+              <button
+                onClick={endRound}
+                className="flex-1 rounded-xl border border-red-500/50 py-3 text-sm text-red-300 active:scale-[0.98]"
+              >
                 Encerrar Ronda
               </button>
             </div>
@@ -433,8 +492,8 @@ function ScanPageInner() {
 
         {step === "ending" && (
           <div className="text-center">
-            <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-600 border-t-emerald-400" />
-            <p className="text-sm text-slate-300">Encerrando ronda...</p>
+            <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-emerald-400" />
+            <p className="text-sm text-slate-400">Encerrando ronda...</p>
           </div>
         )}
 
@@ -456,7 +515,7 @@ function ScanPageInner() {
 
         {(step === "resolving" || step === "locating" || step === "submitting") && (
           <div className="w-full max-w-sm text-center">
-            <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-600 border-t-emerald-400" />
+            <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-emerald-400" />
             <p className="text-sm text-slate-300">
               {step === "resolving" && "Validando QR Code..."}
               {step === "locating" && "Obtendo sua localização..."}
@@ -467,7 +526,7 @@ function ScanPageInner() {
         )}
 
         {step === "review" && equipment && reading && (
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-slate-900 shadow-xl">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 text-slate-900 shadow-xl sm:p-6">
             <h2 className="text-base font-semibold">Confirmar Inspeção</h2>
 
             <dl className="mt-3 space-y-2 text-sm">
@@ -481,28 +540,8 @@ function ScanPageInner() {
             </dl>
 
             <div className="mt-4">
-              <label className="mb-1 block text-xs font-medium text-slate-600">Foto (opcional)</label>
-              {photoPreview ? (
-                <div className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={photoPreview} alt="Prévia da foto" className="h-40 w-full rounded-lg object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setPhotoFile(null)}
-                    className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-1 text-xs text-white"
-                  >
-                    remover
-                  </button>
-                </div>
-              ) : (
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
-                  className="w-full text-sm"
-                />
-              )}
+              <label className="mb-1 block text-xs font-medium text-slate-600">Fotos (opcional)</label>
+              <MultiPhotoInput files={photoFiles} onChange={setPhotoFiles} />
             </div>
 
             <div className="mt-4">
@@ -522,7 +561,7 @@ function ScanPageInner() {
               </button>
               <button
                 onClick={confirmReading}
-                className="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-500"
+                className="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-500 active:scale-[0.98]"
               >
                 Registrar Inspeção
               </button>
@@ -556,7 +595,7 @@ function ScanPageInner() {
             </dl>
             <button
               onClick={reset}
-              className="mt-6 w-full rounded-xl bg-slate-900 py-3 text-sm font-medium text-white hover:bg-slate-800"
+              className="mt-6 w-full rounded-xl bg-slate-900 py-3.5 text-sm font-medium text-white hover:bg-slate-800 active:scale-[0.98]"
             >
               Próximo QR Code
             </button>
@@ -597,9 +636,9 @@ function ScanPageInner() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between border-b border-slate-100 py-1.5">
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="font-medium">{value}</dd>
+    <div className="flex justify-between gap-3 border-b border-slate-100 py-1.5">
+      <dt className="shrink-0 text-slate-500">{label}</dt>
+      <dd className="text-right font-medium">{value}</dd>
     </div>
   );
 }

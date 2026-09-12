@@ -10,6 +10,9 @@ type Equipment = {
   name: string;
   type: string;
   status: string;
+  latitude: number;
+  longitude: number;
+  description: string | null;
   plant: { id: string; name: string; code: string };
   qrCode: { token: string } | null;
 };
@@ -45,6 +48,7 @@ export default function EquipmentPage() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [editingEquipment, setEditingEquipment] = useState<Equipment | null>(null);
 
   function load() {
     fetch("/api/equipment")
@@ -159,6 +163,7 @@ export default function EquipmentPage() {
               <th className="px-4 py-3">Usina</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">QR Code</th>
+              <th className="px-4 py-3">Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -178,11 +183,16 @@ export default function EquipmentPage() {
                     Ver QR Code
                   </Link>
                 </td>
+                <td className="px-4 py-3">
+                  <button onClick={() => setEditingEquipment(eq)} className="text-slate-600 underline">
+                    Editar
+                  </button>
+                </td>
               </tr>
             ))}
             {equipment.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                   Nenhum equipamento cadastrado ainda.
                 </td>
               </tr>
@@ -190,6 +200,121 @@ export default function EquipmentPage() {
           </tbody>
         </table>
       </div>
+
+      {editingEquipment && (
+        <EditEquipmentModal
+          equipment={editingEquipment}
+          onClose={() => setEditingEquipment(null)}
+          onSaved={() => {
+            setEditingEquipment(null);
+            load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditEquipmentModal({
+  equipment,
+  onClose,
+  onSaved,
+}: {
+  equipment: Equipment;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(equipment.name);
+  const [type, setType] = useState(equipment.type);
+  const [status, setStatus] = useState(equipment.status);
+  const [latitude, setLatitude] = useState(String(equipment.latitude));
+  const [longitude, setLongitude] = useState(String(equipment.longitude));
+  const [description, setDescription] = useState(equipment.description ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/equipment/${equipment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, type, status, latitude: Number(latitude), longitude: Number(longitude), description }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Erro ao salvar");
+        return;
+      }
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <form
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+      >
+        <div className="mb-4 flex items-start justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Editar Equipamento</h2>
+            <p className="text-sm text-slate-500">
+              {equipment.code} — {equipment.plant.name}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            ✕
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <Field label="Nome" value={name} onChange={setName} required />
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">Tipo</label>
+            <select value={type} onChange={(e) => setType(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              {EQUIPMENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">Status</label>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              <option value="ATIVO">Ativo</option>
+              <option value="INATIVO">Inativo</option>
+              <option value="MANUTENCAO">Em manutenção</option>
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Latitude" value={latitude} onChange={setLatitude} required type="number" step="any" />
+            <Field label="Longitude" value={longitude} onChange={setLongitude} required type="number" step="any" />
+          </div>
+          <Field label="Descrição" value={description} onChange={setDescription} />
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-300 py-2.5 text-sm font-medium text-slate-700">
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+            >
+              {saving ? "Salvando..." : "Salvar alterações"}
+            </button>
+          </div>
+        </div>
+      </form>
     </div>
   );
 }

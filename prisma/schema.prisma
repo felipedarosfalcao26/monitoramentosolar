@@ -90,8 +90,10 @@ model QrCode {
   @@index([token])
 }
 
-// A scan is an immutable record of a QR read event. Its timestamp and
-// coordinates are never editable by users once created (audit requirement).
+// A scan is a QR read event captured by a vigilante in the field. It is
+// created immutably from the mobile app; back-office roles (Admin/Gestor)
+// may subsequently correct or remove a record, and every such change is
+// written to AuditLog so the original capture is never silently lost.
 model Scan {
   id                     String   @id @default(uuid())
   userId                 String
@@ -107,7 +109,8 @@ model Scan {
   distanceFromEquipmentM Float?
   distanceFlag           String?  // "ok" | "attention" | "inconsistent"
   notes                  String?
-  photoUrl               String?
+  photoUrl               String?  // deprecated: first photo, kept for old records — see photoUrls
+  photoUrls              String[] @default([])
   status                 String   @default("OK") // "OK" | "ANOMALIA"
   offlineCreatedAt       DateTime?
   syncedAt               DateTime?
@@ -195,7 +198,8 @@ model Occurrence {
   category    String
   severity    String   @default("MEDIA") // "BAIXA" | "MEDIA" | "ALTA" | "CRITICA"
   description String?
-  photoUrl    String?
+  photoUrl    String? // deprecated: first photo, kept for old records — see photoUrls
+  photoUrls   String[] @default([])
   status      String   @default("ABERTA") // "ABERTA" | "EM_ANALISE" | "EM_ANDAMENTO" | "RESOLVIDA" | "CANCELADA"
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

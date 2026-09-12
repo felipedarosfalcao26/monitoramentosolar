@@ -44,6 +44,7 @@ export type ReportScan = {
   equipmentCode: string;
   notes: string | null;
   photoUrl: string | null;
+  photoUrls: string[];
 };
 export type ReportRound = {
   startedAt: string;
@@ -325,7 +326,7 @@ export async function generateInspectionReportPdf(input: ReportInput) {
         `${s.equipmentName} (${s.equipmentCode})`,
         FLAG_LABEL[s.distanceFlag ?? "ok"],
         s.notes ?? "—",
-        s.photoUrl ? "Sim" : "—",
+        s.photoUrls?.length ? `${s.photoUrls.length}` : "—",
       ]),
     });
   } else {
@@ -335,10 +336,12 @@ export async function generateInspectionReportPdf(input: ReportInput) {
     doc.text("Nenhuma leitura encontrada para os filtros selecionados.", MARGIN, y);
   }
 
-  const scansWithPhoto = input.scans.filter((s) => s.photoUrl);
-  if (scansWithPhoto.length > 0) {
+  const photoEntries = input.scans.flatMap((s) =>
+    (s.photoUrls?.length ? s.photoUrls : s.photoUrl ? [s.photoUrl] : []).map((url) => ({ scan: s, url }))
+  );
+  if (photoEntries.length > 0) {
     doc.addPage();
-    let py = drawSectionTitle(doc, `Fotos das Leituras (${scansWithPhoto.length})`, 20);
+    let py = drawSectionTitle(doc, `Fotos das Leituras (${photoEntries.length})`, 20);
 
     const cols = 3;
     const gap = 6;
@@ -347,14 +350,14 @@ export async function generateInspectionReportPdf(input: ReportInput) {
     const cellH = cellImgH + 12;
     let col = 0;
 
-    for (const s of scansWithPhoto) {
+    for (const { scan: s, url } of photoEntries) {
       if (py + cellH > 280) {
         doc.addPage();
         py = 20;
         col = 0;
       }
       const x = MARGIN + col * (cellW + gap);
-      const dataUrl = await fetchAsDataUrl(s.photoUrl as string);
+      const dataUrl = await fetchAsDataUrl(url);
       doc.setDrawColor(226, 232, 240);
       doc.rect(x, py, cellW, cellImgH);
       if (dataUrl) {

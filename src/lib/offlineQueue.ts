@@ -10,7 +10,7 @@ export type PendingScan = {
   deviceInfo?: string;
   roundId?: string;
   notes?: string;
-  photoUrl?: string;
+  photoUrls?: string[];
   offlineCreatedAt: string;
 };
 
@@ -53,7 +53,7 @@ export async function flushPendingScans(): Promise<{ synced: number; failed: num
           deviceInfo: scan.deviceInfo,
           roundId: scan.roundId,
           notes: scan.notes,
-          photoUrl: scan.photoUrl,
+          photoUrls: scan.photoUrls,
           offlineCreatedAt: scan.offlineCreatedAt,
         }),
       });
