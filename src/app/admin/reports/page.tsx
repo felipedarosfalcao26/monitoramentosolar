@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { generateInspectionReportPdf } from "@/lib/pdfReport";
+import ScanDetailModal from "@/components/ScanDetailModal";
 
 type Plant = { id: string; name: string };
 type EquipmentOption = { id: string; name: string; code: string; latitude: number; longitude: number };
@@ -70,6 +71,7 @@ export default function ReportsPage() {
   const [scans, setScans] = useState<Scan[]>([]);
   const [loading, setLoading] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [selectedScan, setSelectedScan] = useState<Scan | null>(null);
 
   useEffect(() => {
     fetch("/api/plants")
@@ -148,7 +150,7 @@ export default function ReportsPage() {
       const userName = userOptions.find((u) => u.id === userId)?.name;
       const equipmentName = equipmentOptions.find((e) => e.id === equipmentId)?.name;
 
-      generateInspectionReportPdf({
+      await generateInspectionReportPdf({
         plantName,
         generatedAt: new Date(),
         filters: { from, to, userName, equipmentName },
@@ -296,7 +298,11 @@ export default function ReportsPage() {
           </thead>
           <tbody>
             {scans.map((s) => (
-              <tr key={s.id} className="border-b border-slate-50">
+              <tr
+                key={s.id}
+                onClick={() => setSelectedScan(s)}
+                className="cursor-pointer border-b border-slate-50 hover:bg-slate-50"
+              >
                 <td className="px-4 py-3 whitespace-nowrap">{new Date(s.scannedAt).toLocaleString("pt-BR")}</td>
                 <td className="px-4 py-3">{s.user.name}</td>
                 <td className="px-4 py-3">{s.plant.name}</td>
@@ -311,10 +317,8 @@ export default function ReportsPage() {
                 </td>
                 <td className="px-4 py-3">
                   {s.photoUrl ? (
-                    <a href={s.photoUrl} target="_blank" rel="noopener noreferrer">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={s.photoUrl} alt="Foto do registro" className="h-10 w-10 rounded object-cover hover:opacity-80" />
-                    </a>
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={s.photoUrl} alt="Foto do registro" className="h-10 w-10 rounded object-cover" />
                   ) : (
                     "—"
                   )}
@@ -331,6 +335,8 @@ export default function ReportsPage() {
           </tbody>
         </table>
       </div>
+
+      {selectedScan && <ScanDetailModal scan={selectedScan} onClose={() => setSelectedScan(null)} />}
     </div>
   );
 }

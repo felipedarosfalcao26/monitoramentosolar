@@ -24,7 +24,7 @@ const VIGILANTE_API_ALLOWLIST = [
 ];
 
 // Everything else under /api is back-office (blocked for VIGILANTE) unless allowlisted above.
-const BACK_OFFICE_API_PREFIXES = ["/api/equipment", "/api/reports", "/api/dashboard", "/api/alerts"];
+const BACK_OFFICE_API_PREFIXES = ["/api/equipment", "/api/reports", "/api/dashboard", "/api/alerts", "/api/staticmap"];
 
 // A VIGILANTE may only GET these (e.g. to pick a usina/route when starting a round) — no writes.
 const VIGILANTE_READ_ONLY_PREFIXES = ["/api/routes", "/api/plants"];

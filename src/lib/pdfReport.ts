@@ -1,5 +1,22 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { worldX, worldY } from "./webMercator";
+
+async function fetchAsDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
 
 const FLAG_LABEL: Record<string, string> = { ok: "OK", attention: "Atenção", inconsistent: "Inconsistente" };
 const CATEGORY_LABEL: Record<string, string> = {
@@ -81,8 +98,8 @@ function getFinalY(doc: jsPDF, fallback: number): number {
   return d.lastAutoTable?.finalY ?? fallback;
 }
 
-/** Draws a schematic (non-georeferenced) scatter of equipment vs. reading points. */
-function drawPositionDiagram(doc: jsPDF, y: number, equipment: ReportEquipment[], scans: ReportScan[]): number {
+/** Draws the real OpenStreetMap background (fetched server-side) with equipment vs. reading markers on top. */
+async function drawPositionDiagram(doc: jsPDF, y: number, equipment: ReportEquipment[], scans: ReportScan[]): Promise<number> {
   const mapHeight = 95;
   const mapTop = y;
   const mapLeft = MARGIN;
@@ -110,26 +127,36 @@ function drawPositionDiagram(doc: jsPDF, y: number, equipment: ReportEquipment[]
   const lngSpan = Math.max(maxLng - minLng, 0.0008);
 
   // Pad the plotted area generously so nearby readings still land inside it.
-  const padLat = latSpan * 0.6;
-  const padLng = lngSpan * 0.6;
-  const boxMinLat = minLat - padLat;
-  const boxMaxLat = maxLat + padLat;
-  const boxMinLng = minLng - padLng;
-  const boxMaxLng = maxLng + padLng;
-  const boxLatSpan = boxMaxLat - boxMinLat;
-  const boxLngSpan = boxMaxLng - boxMinLng;
+  const boxMinLat = minLat - latSpan * 0.6;
+  const boxMaxLat = maxLat + latSpan * 0.6;
+  const boxMinLng = minLng - lngSpan * 0.6;
+  const boxMaxLng = maxLng + lngSpan * 0.6;
 
-  const avgLatRad = ((minLat + maxLat) / 2) * (Math.PI / 180);
-  const aspectCorrection = Math.cos(avgLatRad) || 1;
-  const innerPad = 12;
-  const drawW = mapW - innerPad * 2;
-  const drawH = mapHeight - innerPad * 2;
-  const scale = Math.min(drawW / (boxLngSpan * aspectCorrection), drawH / boxLatSpan);
+  const pxWidth = 1000;
+  const pxHeight = Math.round((pxWidth * mapHeight) / mapW);
+  const mapUrl = `/api/staticmap?minLat=${boxMinLat}&maxLat=${boxMaxLat}&minLng=${boxMinLng}&maxLng=${boxMaxLng}&width=${pxWidth}&height=${pxHeight}`;
+  const basemap = await fetchAsDataUrl(mapUrl);
 
-  function project(lat: number, lng: number) {
-    const x = mapLeft + innerPad + (lng - boxMinLng) * aspectCorrection * scale + (drawW - boxLngSpan * aspectCorrection * scale) / 2;
-    const y2 = mapTop + innerPad + (boxMaxLat - lat) * scale + (drawH - boxLatSpan * scale) / 2;
-    return [x, y2] as const;
+  if (basemap) {
+    doc.addImage(basemap, "PNG", mapLeft, mapTop, mapW, mapHeight);
+  } else {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text("Não foi possível carregar o mapa de fundo.", mapLeft + mapW / 2, mapTop + mapHeight / 2, { align: "center" });
+  }
+
+  // Project using the same Web Mercator fractions the /api/staticmap image was cropped to,
+  // so markers land exactly where they belong on the real map underneath them.
+  const worldXMin = worldX(boxMinLng);
+  const worldXMax = worldX(boxMaxLng);
+  const worldYMin = worldY(boxMaxLat); // north edge
+  const worldYMax = worldY(boxMinLat); // south edge
+
+  function project(lat: number, lng: number): [number, number] {
+    const xFrac = (worldX(lng) - worldXMin) / (worldXMax - worldXMin);
+    const yFrac = (worldY(lat) - worldYMin) / (worldYMax - worldYMin);
+    return [mapLeft + xFrac * mapW, mapTop + yFrac * mapHeight];
   }
 
   const insideScans = scans.filter(
@@ -139,20 +166,22 @@ function drawPositionDiagram(doc: jsPDF, y: number, equipment: ReportEquipment[]
 
   // Readings first (so equipment markers stay on top and legible).
   doc.setFillColor(220, 38, 38);
+  doc.setDrawColor(255, 255, 255);
   insideScans.forEach((s) => {
     const [px, py] = project(s.latitude, s.longitude);
-    doc.circle(px, py, 1.4, "F");
+    doc.circle(px, py, 1.6, "FD");
   });
 
   doc.setFillColor(37, 99, 235);
-  doc.setDrawColor(255, 255, 255);
   equipment.forEach((eq) => {
     const [px, py] = project(eq.latitude, eq.longitude);
-    doc.circle(px, py, 2, "FD");
-    doc.setFont("helvetica", "normal");
+    doc.circle(px, py, 2.2, "FD");
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(6.5);
-    doc.setTextColor(51, 65, 85);
-    doc.text(eq.code, px + 2.5, py + 1);
+    doc.setTextColor(255, 255, 255);
+    doc.text(eq.code, px + 2.8, py + 1);
+    doc.setTextColor(15, 23, 42);
+    doc.text(eq.code, px + 2.7, py + 0.9);
   });
 
   // Legend
@@ -174,21 +203,17 @@ function drawPositionDiagram(doc: jsPDF, y: number, equipment: ReportEquipment[]
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `${outsideCount} leitura(s) registrada(s) muito distante(s) da área da usina não aparecem neste diagrama — ver tabela de leituras.`,
+      `${outsideCount} leitura(s) registrada(s) muito distante(s) da área da usina não aparecem neste mapa — ver tabela de leituras.`,
       MARGIN,
       afterY
     );
     afterY += 5;
   }
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(7.5);
-  doc.setTextColor(148, 163, 184);
-  doc.text("Diagrama esquemático de posições relativas — não é um mapa georreferenciado em escala.", MARGIN, afterY);
 
-  return afterY + 8;
+  return afterY + 4;
 }
 
-export function generateInspectionReportPdf(input: ReportInput) {
+export async function generateInspectionReportPdf(input: ReportInput) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
 
   doc.setFont("helvetica", "bold");
@@ -280,7 +305,7 @@ export function generateInspectionReportPdf(input: ReportInput) {
   doc.addPage();
   y = 20;
   y = drawSectionTitle(doc, "Mapa de Pontos", y);
-  y = drawPositionDiagram(doc, y, input.equipment, input.scans);
+  y = await drawPositionDiagram(doc, y, input.equipment, input.scans);
 
   if (y > 250) {
     doc.addPage();
@@ -308,6 +333,58 @@ export function generateInspectionReportPdf(input: ReportInput) {
     doc.setFontSize(9);
     doc.setTextColor(148, 163, 184);
     doc.text("Nenhuma leitura encontrada para os filtros selecionados.", MARGIN, y);
+  }
+
+  const scansWithPhoto = input.scans.filter((s) => s.photoUrl);
+  if (scansWithPhoto.length > 0) {
+    doc.addPage();
+    let py = drawSectionTitle(doc, `Fotos das Leituras (${scansWithPhoto.length})`, 20);
+
+    const cols = 3;
+    const gap = 6;
+    const cellW = (CONTENT_WIDTH - gap * (cols - 1)) / cols;
+    const cellImgH = cellW * 0.75;
+    const cellH = cellImgH + 12;
+    let col = 0;
+
+    for (const s of scansWithPhoto) {
+      if (py + cellH > 280) {
+        doc.addPage();
+        py = 20;
+        col = 0;
+      }
+      const x = MARGIN + col * (cellW + gap);
+      const dataUrl = await fetchAsDataUrl(s.photoUrl as string);
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(x, py, cellW, cellImgH);
+      if (dataUrl) {
+        try {
+          doc.addImage(dataUrl, x, py, cellW, cellImgH, undefined, "FAST");
+        } catch {
+          doc.setFont("helvetica", "italic");
+          doc.setFontSize(7);
+          doc.setTextColor(148, 163, 184);
+          doc.text("Não foi possível carregar a foto", x + cellW / 2, py + cellImgH / 2, { align: "center" });
+        }
+      } else {
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(7);
+        doc.setTextColor(148, 163, 184);
+        doc.text("Foto indisponível", x + cellW / 2, py + cellImgH / 2, { align: "center" });
+      }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(51, 65, 85);
+      doc.text(`${s.equipmentName} (${s.equipmentCode})`, x, py + cellImgH + 4);
+      doc.setTextColor(148, 163, 184);
+      doc.text(formatDateTime(s.scannedAt), x, py + cellImgH + 8);
+
+      col++;
+      if (col >= cols) {
+        col = 0;
+        py += cellH + gap;
+      }
+    }
   }
 
   const pageCount = doc.getNumberOfPages();
