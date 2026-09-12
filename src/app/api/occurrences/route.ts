@@ -11,15 +11,24 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const plantId = searchParams.get("plantId") ?? undefined;
   const status = searchParams.get("status") ?? undefined;
+  const equipmentId = searchParams.get("equipmentId") ?? undefined;
+  const userIdParam = searchParams.get("userId") ?? undefined;
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
 
   const occurrences = await prisma.occurrence.findMany({
     where: {
       plantId,
       status,
-      userId: session.role === "VIGILANTE" ? session.sub : undefined,
+      equipmentId,
+      userId: session.role === "VIGILANTE" ? session.sub : userIdParam,
+      createdAt: {
+        gte: from ? new Date(from) : undefined,
+        lte: to ? new Date(to) : undefined,
+      },
     },
     orderBy: { createdAt: "desc" },
-    take: 300,
+    take: 1000,
     include: {
       user: { select: { id: true, name: true } },
       equipment: { select: { id: true, name: true, code: true } },

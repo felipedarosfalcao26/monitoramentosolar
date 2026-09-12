@@ -10,14 +10,20 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const plantId = searchParams.get("plantId") ?? undefined;
   const userId = searchParams.get("userId") ?? undefined;
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
 
   const rounds = await prisma.round.findMany({
     where: {
       plantId,
       userId: session.role === "VIGILANTE" ? session.sub : userId,
+      startedAt: {
+        gte: from ? new Date(from) : undefined,
+        lte: to ? new Date(to) : undefined,
+      },
     },
     orderBy: { startedAt: "desc" },
-    take: 200,
+    take: 500,
     include: {
       user: { select: { id: true, name: true } },
       plant: { select: { id: true, name: true } },

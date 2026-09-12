@@ -104,12 +104,14 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const plantId = searchParams.get("plantId") ?? undefined;
   const userId = searchParams.get("userId") ?? undefined;
+  const equipmentId = searchParams.get("equipmentId") ?? undefined;
   const from = searchParams.get("from");
   const to = searchParams.get("to");
 
   const scans = await prisma.scan.findMany({
     where: {
       plantId,
+      equipmentId,
       // Vigilantes only ever see their own scans; back-office roles see everyone's.
       userId: session.role === "VIGILANTE" ? session.sub : userId,
       scannedAt: {
@@ -118,7 +120,7 @@ export async function GET(request: NextRequest) {
       },
     },
     orderBy: { scannedAt: "desc" },
-    take: 500,
+    take: 1000,
     include: {
       user: { select: { id: true, name: true } },
       equipment: { select: { id: true, name: true, code: true, latitude: true, longitude: true } },

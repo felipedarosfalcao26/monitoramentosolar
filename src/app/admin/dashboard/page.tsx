@@ -1,7 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
+import type { MapEquipment, MapScan } from "@/components/PlantMap";
+
+const PlantMap = dynamic(() => import("@/components/PlantMap"), { ssr: false });
 
 type Summary = {
   totalScans: number;
@@ -46,15 +50,51 @@ const ALERT_SEVERITY_COLOR: Record<string, string> = {
   CRITICA: "border-red-600",
 };
 
+type Plant = { id: string; name: string; latitude: number; longitude: number };
+type Equipment = { id: string; name: string; code: string; latitude: number; longitude: number };
+type Scan = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  scannedAt: string;
+  distanceFlag: string | null;
+  equipmentId: string;
+  photoUrl: string | null;
+  notes: string | null;
+  equipment: { name: string };
+  user: { name: string };
+};
+
+const LIVE_REFRESH_SECONDS = 15;
+
+function todayRange() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return { from: start.toISOString(), to: new Date(start.getTime() + 86400000).toISOString() };
+}
+
 export default function DashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+
+  const [plants, setPlants] = useState<Plant[]>([]);
+  const [livePlantId, setLivePlantId] = useState("");
+  const [liveEquipment, setLiveEquipment] = useState<Equipment[]>([]);
+  const [liveScans, setLiveScans] = useState<Scan[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secondsToRefresh, setSecondsToRefresh] = useState(LIVE_REFRESH_SECONDS);
 
   useEffect(() => {
     fetch("/api/dashboard/summary")
       .then((r) => r.json())
       .then(setSummary);
     loadAlerts();
+    fetch("/api/plants")
+      .then((r) => r.json())
+      .then((d) => {
+        setPlants(d.plants ?? []);
+        if (d.plants?.[0]) setLivePlantId(d.plants[0].id);
+      });
   }, []);
 
   function loadAlerts() {
@@ -71,6 +111,56 @@ export default function DashboardPage() {
     });
     loadAlerts();
   }
+
+  const loadLiveMap = useCallback(async () => {
+    if (!livePlantId) return;
+    const { from, to } = todayRange();
+    const [eqRes, scanRes] = await Promise.all([
+      fetch(`/api/equipment?plantId=${livePlantId}`),
+      fetch(`/api/scans?plantId=${livePlantId}&from=${from}&to=${to}`),
+    ]);
+    const eqData = await eqRes.json();
+    const scanData = await scanRes.json();
+    setLiveEquipment(eqData.equipment ?? []);
+    setLiveScans(scanData.scans ?? []);
+    setLastUpdated(new Date());
+    setSecondsToRefresh(LIVE_REFRESH_SECONDS);
+  }, [livePlantId]);
+
+  useEffect(() => {
+    loadLiveMap();
+    const refreshInterval = setInterval(loadLiveMap, LIVE_REFRESH_SECONDS * 1000);
+    return () => clearInterval(refreshInterval);
+  }, [loadLiveMap]);
+
+  useEffect(() => {
+    const countdown = setInterval(() => setSecondsToRefresh((s) => Math.max(s - 1, 0)), 1000);
+    return () => clearInterval(countdown);
+  }, []);
+
+  const visitedIds = useMemo(() => new Set(liveScans.map((s) => s.equipmentId)), [liveScans]);
+  const selectedLivePlant = plants.find((p) => p.id === livePlantId);
+
+  const mapEquipment: MapEquipment[] = liveEquipment.map((eq) => ({
+    id: eq.id,
+    name: eq.name,
+    code: eq.code,
+    latitude: eq.latitude,
+    longitude: eq.longitude,
+    visited: visitedIds.has(eq.id),
+  }));
+
+  const mapScans: MapScan[] = liveScans.map((s) => ({
+    id: s.id,
+    latitude: s.latitude,
+    longitude: s.longitude,
+    scannedAt: s.scannedAt,
+    equipmentName: s.equipment.name,
+    userName: s.user.name,
+    distanceFlag: s.distanceFlag,
+    photoUrl: s.photoUrl,
+    notes: s.notes,
+  }));
 
   if (!summary) {
     return <p className="text-sm text-slate-500">Carregando...</p>;
@@ -100,6 +190,44 @@ export default function DashboardPage() {
             <p className="mt-1 text-xs text-slate-500">{c.label}</p>
           </div>
         ))}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+            </span>
+            <h2 className="text-sm font-semibold text-slate-900">Mapa ao vivo — marcações de hoje</h2>
+          </div>
+          <div className="flex items-center gap-3">
+            <select
+              value={livePlantId}
+              onChange={(e) => setLivePlantId(e.target.value)}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+            >
+              {plants.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-slate-400">
+              {lastUpdated ? `Atualizado ${lastUpdated.toLocaleTimeString("pt-BR")}` : "Carregando..."} · próxima em {secondsToRefresh}s
+            </span>
+          </div>
+        </div>
+        <div className="h-[420px] overflow-hidden rounded-lg border border-slate-100">
+          {selectedLivePlant && (
+            <PlantMap
+              center={[selectedLivePlant.latitude, selectedLivePlant.longitude]}
+              equipment={mapEquipment}
+              scans={mapScans}
+              showTrajectory={false}
+            />
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-3">

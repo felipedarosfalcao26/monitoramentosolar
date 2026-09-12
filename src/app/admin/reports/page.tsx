@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { generateInspectionReportPdf } from "@/lib/pdfReport";
 
 type Plant = { id: string; name: string };
+type EquipmentOption = { id: string; name: string; code: string; latitude: number; longitude: number };
+type UserOption = { id: string; name: string; role: string };
 type Scan = {
   id: string;
   scannedAt: string;
@@ -13,8 +16,8 @@ type Scan = {
   distanceFromEquipmentM: number | null;
   notes: string | null;
   photoUrl: string | null;
-  user: { name: string };
-  equipment: { name: string; code: string };
+  user: { id: string; name: string };
+  equipment: { id: string; name: string; code: string };
   plant: { name: string };
 };
 
@@ -58,25 +61,53 @@ function toCsv(scans: Scan[]): string {
 export default function ReportsPage() {
   const [plants, setPlants] = useState<Plant[]>([]);
   const [plantId, setPlantId] = useState("");
+  const [equipmentOptions, setEquipmentOptions] = useState<EquipmentOption[]>([]);
+  const [equipmentId, setEquipmentId] = useState("");
+  const [userOptions, setUserOptions] = useState<UserOption[]>([]);
+  const [userId, setUserId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [scans, setScans] = useState<Scan[]>([]);
   const [loading, setLoading] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
   useEffect(() => {
     fetch("/api/plants")
       .then((r) => r.json())
-      .then((d) => setPlants(d.plants ?? []));
+      .then((d) => {
+        setPlants(d.plants ?? []);
+        if (d.plants?.[0]) setPlantId(d.plants[0].id);
+      });
+    fetch("/api/users")
+      .then((r) => r.json())
+      .then((d) => setUserOptions((d.users ?? []).filter((u: UserOption) => u.role === "VIGILANTE")))
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!plantId) {
+      setEquipmentOptions([]);
+      return;
+    }
+    fetch(`/api/equipment?plantId=${plantId}`)
+      .then((r) => r.json())
+      .then((d) => setEquipmentOptions(d.equipment ?? []));
+  }, [plantId]);
+
+  function buildParams() {
+    const params = new URLSearchParams();
+    if (plantId) params.set("plantId", plantId);
+    if (equipmentId) params.set("equipmentId", equipmentId);
+    if (userId) params.set("userId", userId);
+    if (from) params.set("from", new Date(from).toISOString());
+    if (to) params.set("to", new Date(`${to}T23:59:59`).toISOString());
+    return params;
+  }
 
   async function runReport() {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (plantId) params.set("plantId", plantId);
-      if (from) params.set("from", new Date(from).toISOString());
-      if (to) params.set("to", new Date(to).toISOString());
-      const res = await fetch(`/api/scans?${params.toString()}`);
+      const res = await fetch(`/api/scans?${buildParams().toString()}`);
       const data = await res.json();
       setScans(data.scans ?? []);
     } finally {
@@ -100,11 +131,91 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function generatePdf() {
+    setGeneratingPdf(true);
+    try {
+      const params = buildParams();
+      const [scansRes, roundsRes, occurrencesRes] = await Promise.all([
+        fetch(`/api/scans?${params.toString()}`),
+        fetch(`/api/rounds?${params.toString()}`),
+        fetch(`/api/occurrences?${params.toString()}`),
+      ]);
+      const scansData = await scansRes.json();
+      const roundsData = await roundsRes.json();
+      const occurrencesData = await occurrencesRes.json();
+
+      const plantName = plants.find((p) => p.id === plantId)?.name ?? "Todas as usinas";
+      const userName = userOptions.find((u) => u.id === userId)?.name;
+      const equipmentName = equipmentOptions.find((e) => e.id === equipmentId)?.name;
+
+      generateInspectionReportPdf({
+        plantName,
+        generatedAt: new Date(),
+        filters: { from, to, userName, equipmentName },
+        equipment: equipmentOptions,
+        scans: (scansData.scans ?? []).map((s: Scan) => ({
+          id: s.id,
+          scannedAt: s.scannedAt,
+          latitude: s.latitude,
+          longitude: s.longitude,
+          distanceFlag: s.distanceFlag,
+          userName: s.user.name,
+          equipmentName: s.equipment.name,
+          equipmentCode: s.equipment.code,
+          notes: s.notes,
+          photoUrl: s.photoUrl,
+        })),
+        rounds: (roundsData.rounds ?? []).map(
+          (r: {
+            startedAt: string;
+            endedAt: string | null;
+            user: { name: string };
+            route: { name: string } | null;
+            plannedPoints: number;
+            visitedPoints: number;
+            completionPercent: number | null;
+            distanceMeters: number | null;
+            status: string;
+          }) => ({
+            startedAt: r.startedAt,
+            endedAt: r.endedAt,
+            userName: r.user.name,
+            routeName: r.route?.name ?? null,
+            plannedPoints: r.plannedPoints,
+            visitedPoints: r.visitedPoints,
+            completionPercent: r.completionPercent,
+            distanceMeters: r.distanceMeters,
+            status: r.status,
+          })
+        ),
+        occurrences: (occurrencesData.occurrences ?? []).map(
+          (o: {
+            createdAt: string;
+            equipment: { name: string } | null;
+            category: string;
+            severity: string;
+            status: string;
+            description: string | null;
+          }) => ({
+            createdAt: o.createdAt,
+            equipmentName: o.equipment?.name ?? null,
+            category: o.category,
+            severity: o.severity,
+            status: o.status,
+            description: o.description,
+          })
+        ),
+      });
+    } finally {
+      setGeneratingPdf(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">Relatório de Leituras</h1>
-        <p className="text-sm text-slate-500">Filtre por usina e período e exporte os dados</p>
+        <h1 className="text-xl font-semibold text-slate-900">Relatórios</h1>
+        <p className="text-sm text-slate-500">Filtre por usina, período, vigilante e equipamento</p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -115,6 +226,28 @@ export default function ReportsPage() {
             {plants.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Vigilante</label>
+          <select value={userId} onChange={(e) => setUserId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            <option value="">Todos</option>
+            {userOptions.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Equipamento</label>
+          <select value={equipmentId} onChange={(e) => setEquipmentId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            <option value="">Todos</option>
+            {equipmentOptions.map((eq) => (
+              <option key={eq.id} value={eq.id}>
+                {eq.name} ({eq.code})
               </option>
             ))}
           </select>
@@ -136,6 +269,13 @@ export default function ReportsPage() {
           className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
         >
           Exportar CSV
+        </button>
+        <button
+          onClick={generatePdf}
+          disabled={generatingPdf}
+          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
+        >
+          {generatingPdf ? "Gerando PDF..." : "Gerar Relatório PDF Completo"}
         </button>
       </div>
 
