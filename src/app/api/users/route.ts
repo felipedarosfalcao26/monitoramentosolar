@@ -8,7 +8,7 @@ import { ROLES } from "@/lib/roles";
 export async function GET() {
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, email: true, role: true, active: true, createdAt: true },
+    select: { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true },
   });
   return NextResponse.json({ users });
 }
@@ -18,6 +18,7 @@ const createUserSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   role: z.enum(ROLES),
+  phone: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Dados inválidos" }, { status: 400 });
   }
 
-  const { name, email, password, role } = parsed.data;
+  const { name, email, password, role, phone } = parsed.data;
   const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
   if (existing) {
     return NextResponse.json({ error: "Já existe um usuário com este e-mail" }, { status: 409 });
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
 
   const passwordHash = await bcrypt.hash(password, 12);
   const user = await prisma.user.create({
-    data: { name, email: email.toLowerCase(), passwordHash, role },
+    data: { name, email: email.toLowerCase(), passwordHash, role, phone },
   });
 
   await prisma.auditLog.create({
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json(
-    { user: { id: user.id, name: user.name, email: user.email, role: user.role, active: user.active } },
+    { user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, active: user.active } },
     { status: 201 }
   );
 }

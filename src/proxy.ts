@@ -6,11 +6,15 @@ const PUBLIC_PATHS = ["/login", "/api/auth/login"];
 // Only ADMIN may pass.
 const ADMIN_ONLY_PREFIXES = ["/admin/users"];
 
-// GESTOR may only GET this (e.g. to list vigilantes for a report filter) — no writes, and never VIGILANTE.
+// GESTOR may only GET this (e.g. to list vigilantes for a report filter) — no writes, and never a field role.
 const ADMIN_WRITE_GESTOR_READ_PREFIXES = ["/api/users"];
 
-// Pages under /admin are back-office only; a VIGILANTE is redirected home.
+// Pages under /admin are back-office only; a field role is redirected home.
 const BACK_OFFICE_PAGE_PREFIXES = ["/admin"];
+
+// Field-role mobile pages, each restricted to its own role below.
+const VIGILANTE_ONLY_PAGE_PREFIXES = ["/scan"];
+const TECNICO_ONLY_PAGE_PREFIXES = ["/manutencao"];
 
 // API prefixes a VIGILANTE may always use (their own field-work endpoints).
 const VIGILANTE_API_ALLOWLIST = [
@@ -23,11 +27,14 @@ const VIGILANTE_API_ALLOWLIST = [
   "/api/uploads",
 ];
 
-// Everything else under /api is back-office (blocked for VIGILANTE) unless allowlisted above.
+// API prefixes a TECNICO_MANUTENCAO may always use (their own field-work endpoints).
+const TECNICO_API_ALLOWLIST = ["/api/auth", "/api/maintenance", "/api/qr", "/api/qrcodes", "/api/uploads"];
+
+// Everything else under /api is back-office (blocked for field roles) unless allowlisted above.
 const BACK_OFFICE_API_PREFIXES = ["/api/equipment", "/api/reports", "/api/dashboard", "/api/alerts", "/api/staticmap"];
 
-// A VIGILANTE may only GET these (e.g. to pick a usina/route when starting a round) — no writes.
-const VIGILANTE_READ_ONLY_PREFIXES = ["/api/routes", "/api/plants"];
+// A field role may only GET these (e.g. to pick a usina when starting a round/task) — no writes.
+const FIELD_READ_ONLY_PREFIXES = ["/api/routes", "/api/plants"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -58,16 +65,21 @@ export async function proxy(request: NextRequest) {
   }
 
   if (ADMIN_WRITE_GESTOR_READ_PREFIXES.some((p) => pathname.startsWith(p))) {
-    if (session.role === "VIGILANTE") return deny();
+    if (session.role === "VIGILANTE" || session.role === "TECNICO_MANUTENCAO") return deny();
     if (session.role === "GESTOR" && request.method !== "GET") return deny();
   }
 
-  if (session.role === "VIGILANTE") {
+  if (session.role === "VIGILANTE" || session.role === "TECNICO_MANUTENCAO") {
+    const isVigilante = session.role === "VIGILANTE";
+    const apiAllowlist = isVigilante ? VIGILANTE_API_ALLOWLIST : TECNICO_API_ALLOWLIST;
+    const foreignPagePrefixes = isVigilante ? TECNICO_ONLY_PAGE_PREFIXES : VIGILANTE_ONLY_PAGE_PREFIXES;
+
     if (BACK_OFFICE_PAGE_PREFIXES.some((p) => pathname.startsWith(p))) return deny();
-    if (BACK_OFFICE_API_PREFIXES.some((p) => pathname.startsWith(p)) && !VIGILANTE_API_ALLOWLIST.some((p) => pathname.startsWith(p))) {
+    if (foreignPagePrefixes.some((p) => pathname.startsWith(p))) return deny();
+    if (BACK_OFFICE_API_PREFIXES.some((p) => pathname.startsWith(p)) && !apiAllowlist.some((p) => pathname.startsWith(p))) {
       return deny();
     }
-    if (VIGILANTE_READ_ONLY_PREFIXES.some((p) => pathname.startsWith(p)) && request.method !== "GET") {
+    if (FIELD_READ_ONLY_PREFIXES.some((p) => pathname.startsWith(p)) && request.method !== "GET") {
       return deny();
     }
   }

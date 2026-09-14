@@ -2,18 +2,18 @@
 
 import { useEffect, useState } from "react";
 import type { Role } from "@/lib/roles";
+import { ROLE_LABELS } from "@/lib/roles";
 
 type User = {
   id: string;
   name: string;
   email: string;
+  phone: string | null;
   role: Role;
   active: boolean;
 };
 
-const ROLE_LABEL: Record<Role, string> = { ADMIN: "Administrador", GESTOR: "Gestor", VIGILANTE: "Vigilante" };
-
-const emptyForm = { name: "", email: "", password: "", role: "VIGILANTE" as Role };
+const emptyForm = { name: "", email: "", password: "", phone: "", role: "VIGILANTE" as Role };
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -21,6 +21,8 @@ export default function UsersPage() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [editingPhoneId, setEditingPhoneId] = useState<string | null>(null);
+  const [phoneDraft, setPhoneDraft] = useState("");
 
   function load() {
     fetch("/api/users")
@@ -73,12 +75,22 @@ export default function UsersPage() {
     alert("Senha redefinida com sucesso.");
   }
 
+  async function savePhone(user: User) {
+    await fetch(`/api/users/${user.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: phoneDraft || null }),
+    });
+    setEditingPhoneId(null);
+    load();
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Usuários</h1>
-          <p className="text-sm text-slate-500">Administradores, gestores e vigilantes</p>
+          <p className="text-sm text-slate-500">Administradores, gestores, vigilantes e técnicos de manutenção</p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
@@ -93,6 +105,12 @@ export default function UsersPage() {
           <Field label="Nome" value={form.name} onChange={(v) => setForm({ ...form, name: v })} required />
           <Field label="E-mail" value={form.email} onChange={(v) => setForm({ ...form, email: v })} required type="email" />
           <Field label="Senha provisória" value={form.password} onChange={(v) => setForm({ ...form, password: v })} required type="password" />
+          <Field
+            label="WhatsApp (com DDI/DDD, ex: 5571999999999)"
+            value={form.phone}
+            onChange={(v) => setForm({ ...form, phone: v })}
+            type="tel"
+          />
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">Perfil</label>
             <select
@@ -101,6 +119,7 @@ export default function UsersPage() {
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
               <option value="VIGILANTE">Vigilante</option>
+              <option value="TECNICO_MANUTENCAO">Técnico de Manutenção</option>
               <option value="GESTOR">Gestor</option>
               <option value="ADMIN">Administrador</option>
             </select>
@@ -124,6 +143,7 @@ export default function UsersPage() {
             <tr className="border-b border-slate-100 text-xs uppercase text-slate-400">
               <th className="px-4 py-3">Nome</th>
               <th className="px-4 py-3">E-mail</th>
+              <th className="px-4 py-3">WhatsApp</th>
               <th className="px-4 py-3">Perfil</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Ações</th>
@@ -134,7 +154,33 @@ export default function UsersPage() {
               <tr key={u.id} className="border-b border-slate-50">
                 <td className="px-4 py-3 font-medium">{u.name}</td>
                 <td className="px-4 py-3">{u.email}</td>
-                <td className="px-4 py-3">{ROLE_LABEL[u.role]}</td>
+                <td className="px-4 py-3">
+                  {editingPhoneId === u.id ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        autoFocus
+                        value={phoneDraft}
+                        onChange={(e) => setPhoneDraft(e.target.value)}
+                        placeholder="5571999999999"
+                        className="w-36 rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                      />
+                      <button onClick={() => savePhone(u)} className="text-xs text-emerald-600 underline">
+                        salvar
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setEditingPhoneId(u.id);
+                        setPhoneDraft(u.phone ?? "");
+                      }}
+                      className="text-slate-500 underline decoration-dotted hover:text-slate-700"
+                    >
+                      {u.phone ?? "adicionar"}
+                    </button>
+                  )}
+                </td>
+                <td className="px-4 py-3">{ROLE_LABELS[u.role]}</td>
                 <td className="px-4 py-3">
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -156,7 +202,7 @@ export default function UsersPage() {
             ))}
             {users.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
                   Nenhum usuário cadastrado ainda.
                 </td>
               </tr>

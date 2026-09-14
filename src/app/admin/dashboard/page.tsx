@@ -66,6 +66,13 @@ type Scan = {
   user: { name: string };
 };
 
+type MaintenanceStats = {
+  total: number;
+  overall: { PENDENTE: number; EM_ANDAMENTO: number; CONCLUIDA: number; ATRASADA: number; CANCELADA: number };
+  byPlant: { plantId: string; plantName: string; PENDENTE: number; EM_ANDAMENTO: number; CONCLUIDA: number; ATRASADA: number }[];
+  byTechnician: { userId: string; userName: string; PENDENTE: number; EM_ANDAMENTO: number; CONCLUIDA: number; ATRASADA: number }[];
+};
+
 const LIVE_REFRESH_SECONDS = 15;
 
 function todayRange() {
@@ -77,6 +84,7 @@ function todayRange() {
 export default function DashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [maintenance, setMaintenance] = useState<MaintenanceStats | null>(null);
 
   const [plants, setPlants] = useState<Plant[]>([]);
   const [livePlantId, setLivePlantId] = useState("");
@@ -89,6 +97,9 @@ export default function DashboardPage() {
     fetch("/api/dashboard/summary")
       .then((r) => r.json())
       .then(setSummary);
+    fetch("/api/maintenance/stats")
+      .then((r) => r.json())
+      .then(setMaintenance);
     loadAlerts();
     fetch("/api/plants")
       .then((r) => r.json())
@@ -195,6 +206,69 @@ export default function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {maintenance && (
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">🛠️ Manutenção — atividades de hoje</h2>
+            <Link href="/admin/maintenance" className="text-xs text-slate-500 underline">
+              Ver plano completo
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="rounded-lg bg-slate-50 p-3">
+              <p className="text-xl font-semibold text-slate-700">{maintenance.overall.PENDENTE}</p>
+              <p className="text-xs text-slate-500">Pendentes</p>
+            </div>
+            <div className="rounded-lg bg-blue-50 p-3">
+              <p className="text-xl font-semibold text-blue-600">{maintenance.overall.EM_ANDAMENTO}</p>
+              <p className="text-xs text-slate-500">Em andamento</p>
+            </div>
+            <div className="rounded-lg bg-emerald-50 p-3">
+              <p className="text-xl font-semibold text-emerald-600">{maintenance.overall.CONCLUIDA}</p>
+              <p className="text-xs text-slate-500">Concluídas</p>
+            </div>
+            <div className="rounded-lg bg-red-50 p-3">
+              <p className="text-xl font-semibold text-red-600">{maintenance.overall.ATRASADA}</p>
+              <p className="text-xs text-slate-500">Atrasadas</p>
+            </div>
+          </div>
+          {(maintenance.byPlant.length > 0 || maintenance.byTechnician.length > 0) && (
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {maintenance.byPlant.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Por usina</p>
+                  <div className="space-y-1 text-xs">
+                    {maintenance.byPlant.map((p) => (
+                      <div key={p.plantId} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5">
+                        <span className="text-slate-700">{p.plantName}</span>
+                        <span className="text-slate-500">
+                          {p.CONCLUIDA} concluídas · {p.PENDENTE + p.EM_ANDAMENTO} em aberto{p.ATRASADA > 0 ? ` · ${p.ATRASADA} atrasadas` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {maintenance.byTechnician.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Por técnico</p>
+                  <div className="space-y-1 text-xs">
+                    {maintenance.byTechnician.map((t) => (
+                      <div key={t.userId} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5">
+                        <span className="text-slate-700">{t.userName}</span>
+                        <span className="text-slate-500">
+                          {t.CONCLUIDA} concluídas · {t.PENDENTE + t.EM_ANDAMENTO} em aberto{t.ATRASADA > 0 ? ` · ${t.ATRASADA} atrasadas` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -309,6 +383,9 @@ export default function DashboardPage() {
               </Link>
               <Link href="/admin/routes" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
                 + Nova rota de inspeção
+              </Link>
+              <Link href="/admin/maintenance" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+                + Nova atividade de manutenção
               </Link>
               <Link href="/admin/map" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
                 Ver mapa e trajetos

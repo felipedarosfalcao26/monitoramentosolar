@@ -8,11 +8,12 @@ generator client {
 }
 
 // Roles as plain strings (not a native enum) so this schema can move to
-// Postgres later with no type changes: "ADMIN" | "GESTOR" | "VIGILANTE"
+// Postgres later with no type changes: "ADMIN" | "GESTOR" | "VIGILANTE" | "TECNICO_MANUTENCAO"
 model User {
   id           String   @id @default(uuid())
   name         String
   email        String   @unique
+  phone        String?
   passwordHash String
   role         String   @default("VIGILANTE")
   active       Boolean  @default(true)
@@ -23,6 +24,9 @@ model User {
   auditLogs   AuditLog[]
   rounds      Round[]
   occurrences Occurrence[]
+
+  maintenanceTasksAssigned MaintenanceTask[]      @relation("MaintenanceAssignee")
+  maintenanceExecutions    MaintenanceExecution[]
 
   @@index([role])
 }
@@ -50,6 +54,7 @@ model Plant {
   rounds      Round[]
   occurrences Occurrence[]
   alerts      Alert[]
+  maintenanceTasks MaintenanceTask[]
 
   @@index([code])
 }
@@ -72,6 +77,7 @@ model Equipment {
   scans   Scan[]
   routePoints RoutePoint[]
   occurrences Occurrence[]
+  maintenanceTasks MaintenanceTask[]
 
   @@unique([plantId, code])
   @@index([plantId])
@@ -249,4 +255,65 @@ model AuditLog {
 
   @@index([entity, entityId])
   @@index([createdAt])
+}
+
+// A recurring maintenance activity definition (the "plano de manutenção"):
+// what has to be done, how often, and by which role/technician. Concrete due
+// instances are materialized on demand as MaintenanceExecution rows — see
+// src/lib/maintenanceSchedule.ts for how a period is computed from frequency.
+model MaintenanceTask {
+  id                  String   @id @default(uuid())
+  plantId             String
+  equipmentId         String?
+  title               String
+  description         String?
+  category            String?
+  frequency           String   // "DIARIA" | "SEMANAL" | "MENSAL" | "TRIMESTRAL" | "SEMESTRAL" | "ANUAL"
+  scheduledMonths     Int[]    @default([]) // 1-12; only used by TRIMESTRAL/SEMESTRAL/ANUAL — empty means "every period"
+  requiredTechnicians Int      @default(1)
+  assignedRole        String?
+  assignedUserId      String?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  plant        Plant                  @relation(fields: [plantId], references: [id])
+  equipment    Equipment?             @relation(fields: [equipmentId], references: [id])
+  assignedUser User?                  @relation("MaintenanceAssignee", fields: [assignedUserId], references: [id])
+  executions   MaintenanceExecution[]
+
+  @@index([plantId])
+  @@index([frequency])
+  @@index([assignedUserId])
+}
+
+// One concrete due instance of a MaintenanceTask for a given period (day,
+// ISO week, month, quarter, semester or year). Materialized lazily by
+// /api/maintenance/today the first time a period becomes current, so no
+// history is pre-generated for periods no one has reached yet.
+model MaintenanceExecution {
+  id                     String    @id @default(uuid())
+  taskId                 String
+  periodKey              String
+  dueDate                DateTime
+  status                 String    @default("PENDENTE") // "PENDENTE" | "EM_ANDAMENTO" | "CONCLUIDA" | "ATRASADA" | "CANCELADA"
+  userId                 String?
+  startedAt              DateTime?
+  completedAt            DateTime?
+  latitude               Float?
+  longitude              Float?
+  distanceFromEquipmentM Float?
+  distanceFlag           String?
+  notes                  String?
+  photoUrls              String[]  @default([])
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  task MaintenanceTask @relation(fields: [taskId], references: [id])
+  user User?           @relation(fields: [userId], references: [id])
+
+  @@unique([taskId, periodKey])
+  @@index([status])
+  @@index([dueDate])
+  @@index([userId])
 }

@@ -39,7 +39,8 @@ function LoginForm() {
       if (next) {
         router.push(next);
       } else {
-        router.push(data.user.role === "VIGILANTE" ? "/scan" : "/admin/dashboard");
+        const fieldHome: Record<string, string> = { VIGILANTE: "/scan", TECNICO_MANUTENCAO: "/manutencao" };
+        router.push(fieldHome[data.user.role] ?? "/admin/dashboard");
       }
       router.refresh();
     } finally {

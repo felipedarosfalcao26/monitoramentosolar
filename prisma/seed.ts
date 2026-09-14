@@ -8,6 +8,7 @@ async function main() {
   const adminPassword = await bcrypt.hash("admin123", 12);
   const gestorPassword = await bcrypt.hash("gestor123", 12);
   const vigilantePassword = await bcrypt.hash("vigilante123", 12);
+  const tecnicoPassword = await bcrypt.hash("tecnico123", 12);
 
   const admin = await prisma.user.upsert({
     where: { email: "admin@vistoriasolar.com" },
@@ -25,6 +26,17 @@ async function main() {
     where: { email: "vigilante@vistoriasolar.com" },
     update: {},
     create: { name: "Vigilante de Campo", email: "vigilante@vistoriasolar.com", passwordHash: vigilantePassword, role: "VIGILANTE" },
+  });
+
+  await prisma.user.upsert({
+    where: { email: "tecnico@vistoriasolar.com" },
+    update: {},
+    create: {
+      name: "Técnico de Manutenção",
+      email: "tecnico@vistoriasolar.com",
+      passwordHash: tecnicoPassword,
+      role: "TECNICO_MANUTENCAO",
+    },
   });
 
   const plant = await prisma.plant.upsert({
@@ -94,6 +106,7 @@ async function main() {
   console.log("Login admin: admin@vistoriasolar.com / admin123");
   console.log("Login gestor: gestor@vistoriasolar.com / gestor123");
   console.log("Login vigilante: vigilante@vistoriasolar.com / vigilante123");
+  console.log("Login técnico de manutenção: tecnico@vistoriasolar.com / tecnico123");
   console.log(`Admin id: ${admin.id}`);
 }
 

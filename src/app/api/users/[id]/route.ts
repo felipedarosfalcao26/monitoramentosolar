@@ -9,6 +9,7 @@ const patchSchema = z.object({
   active: z.boolean().optional(),
   role: z.enum(ROLES).optional(),
   newPassword: z.string().min(6).optional(),
+  phone: z.string().nullable().optional(),
 });
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,9 +26,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: "Usuário não encontrado" }, { status: 404 });
   }
 
-  const data: { active?: boolean; role?: string; passwordHash?: string } = {};
+  const data: { active?: boolean; role?: string; passwordHash?: string; phone?: string | null } = {};
   if (parsed.data.active !== undefined) data.active = parsed.data.active;
   if (parsed.data.role !== undefined) data.role = parsed.data.role;
+  if (parsed.data.phone !== undefined) data.phone = parsed.data.phone;
   if (parsed.data.newPassword) data.passwordHash = await bcrypt.hash(parsed.data.newPassword, 12);
 
   const updated = await prisma.user.update({ where: { id }, data });
@@ -44,6 +46,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   });
 
   return NextResponse.json({
-    user: { id: updated.id, name: updated.name, email: updated.email, role: updated.role, active: updated.active },
+    user: { id: updated.id, name: updated.name, email: updated.email, phone: updated.phone, role: updated.role, active: updated.active },
   });
 }
