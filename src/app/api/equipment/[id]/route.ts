@@ -53,3 +53,31 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   return NextResponse.json({ equipment });
 }
+
+/** Deletes an equipment/inspection point and everything tied to it (QR code, scans, occurrences, route entries). */
+export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const session = await getSession();
+  if (!session || session.role === "VIGILANTE") {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
+  const existing = await prisma.equipment.findUnique({ where: { id } });
+  if (!existing) {
+    return NextResponse.json({ error: "Equipamento não encontrado" }, { status: 404 });
+  }
+
+  await prisma.$transaction([
+    prisma.occurrence.updateMany({ where: { equipmentId: id }, data: { equipmentId: null } }),
+    prisma.routePoint.deleteMany({ where: { equipmentId: id } }),
+    prisma.scan.deleteMany({ where: { equipmentId: id } }),
+    prisma.qrCode.deleteMany({ where: { equipmentId: id } }),
+    prisma.equipment.delete({ where: { id } }),
+  ]);
+
+  await prisma.auditLog.create({
+    data: { userId: session.sub, action: "DELETE", entity: "Equipment", entityId: id, before: JSON.stringify(existing) },
+  });
+
+  return NextResponse.json({ ok: true });
+}

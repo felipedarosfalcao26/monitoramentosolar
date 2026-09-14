@@ -68,6 +68,12 @@ export default function OccurrencesPage() {
     load();
   }
 
+  async function handleDelete(o: Occurrence) {
+    if (!confirm("Excluir esta ocorrência permanentemente?")) return;
+    await fetch(`/api/occurrences/${o.id}`, { method: "DELETE" });
+    load();
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -108,23 +114,42 @@ export default function OccurrencesPage() {
                 <div className={`mt-2 grid gap-1.5 ${photos.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
                   {photos.map((url, i) => (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img key={i} src={url} alt="Foto da ocorrência" className="h-28 w-full rounded-lg object-cover" />
+                    <img
+                      key={i}
+                      src={url}
+                      alt="Foto da ocorrência"
+                      className="h-28 w-full rounded-lg border border-dashed border-slate-200 bg-slate-50 object-cover text-xs text-slate-400"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.alt = "Foto indisponível (arquivo não encontrado)";
+                        e.currentTarget.src =
+                          "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>";
+                      }}
+                    />
                   ))}
                 </div>
               ) : null;
             })()}
             <p className="mt-2 text-xs text-slate-400">Registrado por {o.user.name}</p>
-            <select
-              value={o.status}
-              onChange={(e) => updateStatus(o.id, e.target.value)}
-              className="mt-3 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABEL[s]}
-                </option>
-              ))}
-            </select>
+            <div className="mt-3 flex gap-2">
+              <select
+                value={o.status}
+                onChange={(e) => updateStatus(o.id, e.target.value)}
+                className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABEL[s]}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => handleDelete(o)}
+                className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+              >
+                Excluir
+              </button>
+            </div>
           </div>
         ))}
         {occurrences.length === 0 && (

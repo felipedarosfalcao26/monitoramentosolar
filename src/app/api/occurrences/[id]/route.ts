@@ -40,3 +40,22 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   return NextResponse.json({ occurrence });
 }
+
+export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const session = await getSession();
+  if (!session || session.role === "VIGILANTE") {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
+  const existing = await prisma.occurrence.findUnique({ where: { id } });
+  if (!existing) return NextResponse.json({ error: "Ocorrência não encontrada" }, { status: 404 });
+
+  await prisma.occurrence.delete({ where: { id } });
+
+  await prisma.auditLog.create({
+    data: { userId: session.sub, action: "DELETE", entity: "Occurrence", entityId: id, before: JSON.stringify(existing) },
+  });
+
+  return NextResponse.json({ ok: true });
+}

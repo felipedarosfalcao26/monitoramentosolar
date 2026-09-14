@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import type { MapEquipment, MapScan } from "@/components/PlantMap";
+import type { MapEquipment, MapPlant, MapScan } from "@/components/PlantMap";
 
 const PlantMap = dynamic(() => import("@/components/PlantMap"), { ssr: false });
 
@@ -141,6 +141,9 @@ export default function DashboardPage() {
 
   const visitedIds = useMemo(() => new Set(liveScans.map((s) => s.equipmentId)), [liveScans]);
   const selectedLivePlant = plants.find((p) => p.id === livePlantId);
+  const mapPlants: MapPlant[] = selectedLivePlant
+    ? [{ id: selectedLivePlant.id, name: selectedLivePlant.name, latitude: selectedLivePlant.latitude, longitude: selectedLivePlant.longitude }]
+    : [];
 
   const mapEquipment: MapEquipment[] = liveEquipment.map((eq) => ({
     id: eq.id,
@@ -223,6 +226,7 @@ export default function DashboardPage() {
           {selectedLivePlant && (
             <PlantMap
               center={[selectedLivePlant.latitude, selectedLivePlant.longitude]}
+              plants={mapPlants}
               equipment={mapEquipment}
               scans={mapScans}
               showTrajectory={false}

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import type { MapEquipment, MapScan } from "@/components/PlantMap";
+import type { MapEquipment, MapPlant, MapScan } from "@/components/PlantMap";
 
 const PlantMap = dynamic(() => import("@/components/PlantMap"), { ssr: false });
 
@@ -58,6 +58,9 @@ export default function MapPage() {
 
   const visitedEquipmentIds = useMemo(() => new Set(scans.map((s) => s.equipmentId)), [scans]);
   const selectedPlant = plants.find((p) => p.id === plantId);
+  const mapPlants: MapPlant[] = selectedPlant
+    ? [{ id: selectedPlant.id, name: selectedPlant.name, latitude: selectedPlant.latitude, longitude: selectedPlant.longitude }]
+    : [];
 
   const mapEquipment: MapEquipment[] = equipment.map((eq) => ({
     id: eq.id,
@@ -107,6 +110,7 @@ export default function MapPage() {
       </div>
 
       <div className="flex flex-wrap gap-4 text-xs text-slate-500">
+        <Legend color="#f59e0b" label="Usina" emoji="☀️" />
         <Legend color="#059669" label="Equipamento visitado" />
         <Legend color="#94a3b8" label="Equipamento não visitado" />
         <Legend color="#d97706" label="Leitura com atenção (distância)" />
@@ -117,6 +121,7 @@ export default function MapPage() {
         {selectedPlant && (
           <PlantMap
             center={[selectedPlant.latitude, selectedPlant.longitude]}
+            plants={mapPlants}
             equipment={mapEquipment}
             scans={mapScans}
             showTrajectory={showTrajectory}
@@ -127,10 +132,12 @@ export default function MapPage() {
   );
 }
 
-function Legend({ color, label }: { color: string; label: string }) {
+function Legend({ color, label, emoji }: { color: string; label: string; emoji?: string }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+      <span className="flex h-2.5 w-2.5 items-center justify-center rounded-full text-[6px]" style={{ backgroundColor: color }}>
+        {emoji}
+      </span>
       {label}
     </div>
   );

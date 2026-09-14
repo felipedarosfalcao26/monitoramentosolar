@@ -49,6 +49,10 @@ export default function EquipmentPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingEquipment, setEditingEquipment] = useState<Equipment | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [filterPlantId, setFilterPlantId] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [search, setSearch] = useState("");
 
   function load() {
     fetch("/api/equipment")
@@ -83,6 +87,52 @@ export default function EquipmentPage() {
       setSaving(false);
     }
   }
+
+  async function toggleActive(eq: Equipment) {
+    setBusyId(eq.id);
+    try {
+      await fetch(`/api/equipment/${eq.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: eq.status === "ATIVO" ? "INATIVO" : "ATIVO" }),
+      });
+      load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleDelete(eq: Equipment) {
+    const confirmed = confirm(
+      `Excluir o equipamento "${eq.name}" (${eq.code}) permanentemente?\n\nO QR Code e o histórico de leituras desse ponto também serão apagados. Essa ação não pode ser desfeita.`
+    );
+    if (!confirmed) return;
+    setBusyId(eq.id);
+    try {
+      const res = await fetch(`/api/equipment/${eq.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error ?? "Erro ao excluir equipamento");
+        return;
+      }
+      load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const equipmentTypesInUse = Array.from(new Set(equipment.map((eq) => eq.type))).sort();
+
+  const filteredEquipment = equipment.filter((eq) => {
+    if (filterPlantId && eq.plant.id !== filterPlantId) return false;
+    if (filterType && eq.type !== filterType) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const haystack = `${eq.code} ${eq.name} ${eq.type}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="space-y-6">
@@ -153,6 +203,61 @@ export default function EquipmentPage() {
         </form>
       )}
 
+      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Usina</label>
+          <select
+            value={filterPlantId}
+            onChange={(e) => setFilterPlantId(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">Todas</option>
+            {plants.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Tipo</label>
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">Todos</option>
+            {equipmentTypesInUse.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="min-w-[200px] flex-1">
+          <label className="mb-1 block text-xs font-medium text-slate-600">Buscar</label>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Código, nome ou tipo..."
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+        </div>
+        {(filterPlantId || filterType || search) && (
+          <button
+            onClick={() => {
+              setFilterPlantId("");
+              setFilterType("");
+              setSearch("");
+            }}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            Limpar filtros
+          </button>
+        )}
+      </div>
+
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <table className="w-full text-left text-sm">
           <thead>
@@ -167,14 +272,18 @@ export default function EquipmentPage() {
             </tr>
           </thead>
           <tbody>
-            {equipment.map((eq) => (
+            {filteredEquipment.map((eq) => (
               <tr key={eq.id} className="border-b border-slate-50">
                 <td className="px-4 py-3 font-medium">{eq.code}</td>
                 <td className="px-4 py-3">{eq.name}</td>
                 <td className="px-4 py-3">{eq.type}</td>
                 <td className="px-4 py-3">{eq.plant.name}</td>
                 <td className="px-4 py-3">
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      eq.status === "ATIVO" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
+                    }`}
+                  >
                     {eq.status}
                   </span>
                 </td>
@@ -183,17 +292,23 @@ export default function EquipmentPage() {
                     Ver QR Code
                   </Link>
                 </td>
-                <td className="px-4 py-3">
+                <td className="space-x-3 px-4 py-3 text-xs">
                   <button onClick={() => setEditingEquipment(eq)} className="text-slate-600 underline">
                     Editar
+                  </button>
+                  <button onClick={() => toggleActive(eq)} disabled={busyId === eq.id} className="text-slate-600 underline disabled:opacity-50">
+                    {eq.status === "ATIVO" ? "Inativar" : "Ativar"}
+                  </button>
+                  <button onClick={() => handleDelete(eq)} disabled={busyId === eq.id} className="text-red-600 underline disabled:opacity-50">
+                    Excluir
                   </button>
                 </td>
               </tr>
             ))}
-            {equipment.length === 0 && (
+            {filteredEquipment.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
-                  Nenhum equipamento cadastrado ainda.
+                  {equipment.length === 0 ? "Nenhum equipamento cadastrado ainda." : "Nenhum equipamento corresponde aos filtros."}
                 </td>
               </tr>
             )}

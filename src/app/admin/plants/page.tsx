@@ -7,9 +7,14 @@ type Plant = {
   name: string;
   code: string;
   ownerCompany: string;
+  cnpj: string | null;
   state: string;
   city: string;
+  latitude: number;
+  longitude: number;
+  areaHectares: number | null;
   status: string;
+  notes: string | null;
   _count: { equipment: number };
 };
 
@@ -32,6 +37,8 @@ export default function PlantsPage() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [editingPlant, setEditingPlant] = useState<Plant | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   function load() {
     fetch("/api/plants")
@@ -61,6 +68,25 @@ export default function PlantsPage() {
       load();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDelete(plant: Plant) {
+    const confirmed = confirm(
+      `Excluir a usina "${plant.name}" permanentemente?\n\nIsso também vai apagar TODOS os ${plant._count.equipment} equipamento(s), QR Codes, rotas, rondas, leituras e ocorrências dessa usina. Essa ação não pode ser desfeita.`
+    );
+    if (!confirmed) return;
+    setDeletingId(plant.id);
+    try {
+      const res = await fetch(`/api/plants/${plant.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error ?? "Erro ao excluir usina");
+        return;
+      }
+      load();
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -116,6 +142,7 @@ export default function PlantsPage() {
               <th className="px-4 py-3">Local</th>
               <th className="px-4 py-3">Equipamentos</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -133,11 +160,23 @@ export default function PlantsPage() {
                     {p.status}
                   </span>
                 </td>
+                <td className="space-x-3 px-4 py-3 text-xs">
+                  <button onClick={() => setEditingPlant(p)} className="text-slate-600 underline">
+                    Editar
+                  </button>
+                  <button
+                    onClick={() => handleDelete(p)}
+                    disabled={deletingId === p.id}
+                    className="text-red-600 underline disabled:opacity-50"
+                  >
+                    {deletingId === p.id ? "Excluindo..." : "Excluir"}
+                  </button>
+                </td>
               </tr>
             ))}
             {plants.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                   Nenhuma usina cadastrada ainda.
                 </td>
               </tr>
@@ -145,6 +184,121 @@ export default function PlantsPage() {
           </tbody>
         </table>
       </div>
+
+      {editingPlant && (
+        <EditPlantModal
+          plant={editingPlant}
+          onClose={() => setEditingPlant(null)}
+          onSaved={() => {
+            setEditingPlant(null);
+            load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditPlantModal({ plant, onClose, onSaved }: { plant: Plant; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(plant.name);
+  const [ownerCompany, setOwnerCompany] = useState(plant.ownerCompany);
+  const [cnpj, setCnpj] = useState(plant.cnpj ?? "");
+  const [state, setState] = useState(plant.state);
+  const [city, setCity] = useState(plant.city);
+  const [latitude, setLatitude] = useState(String(plant.latitude));
+  const [longitude, setLongitude] = useState(String(plant.longitude));
+  const [areaHectares, setAreaHectares] = useState(plant.areaHectares !== null ? String(plant.areaHectares) : "");
+  const [status, setStatus] = useState(plant.status);
+  const [notes, setNotes] = useState(plant.notes ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/plants/${plant.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          ownerCompany,
+          cnpj,
+          state,
+          city,
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+          areaHectares: areaHectares ? Number(areaHectares) : undefined,
+          status,
+          notes,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Erro ao salvar");
+        return;
+      }
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <form
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+      >
+        <div className="mb-4 flex items-start justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Editar Usina</h2>
+            <p className="text-sm text-slate-500">{plant.code}</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            ✕
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Field label="Nome" value={name} onChange={setName} required />
+          <Field label="Empresa proprietária" value={ownerCompany} onChange={setOwnerCompany} required />
+          <Field label="CNPJ" value={cnpj} onChange={setCnpj} />
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">Status</label>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              <option value="ATIVA">Ativa</option>
+              <option value="INATIVA">Inativa</option>
+              <option value="EM_CONSTRUCAO">Em construção</option>
+            </select>
+          </div>
+          <Field label="Estado (UF)" value={state} onChange={setState} required />
+          <Field label="Município" value={city} onChange={setCity} required />
+          <Field label="Latitude" value={latitude} onChange={setLatitude} required type="number" step="any" />
+          <Field label="Longitude" value={longitude} onChange={setLongitude} required type="number" step="any" />
+          <Field label="Área (ha)" value={areaHectares} onChange={setAreaHectares} type="number" step="any" />
+          <div className="md:col-span-2">
+            <Field label="Observações" value={notes} onChange={setNotes} />
+          </div>
+        </div>
+
+        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
+        <div className="mt-5 flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-300 py-2.5 text-sm font-medium text-slate-700">
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex-1 rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {saving ? "Salvando..." : "Salvar alterações"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

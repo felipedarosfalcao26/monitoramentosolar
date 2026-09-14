@@ -14,6 +14,13 @@ export type MapEquipment = {
   visited: boolean;
 };
 
+export type MapPlant = {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+};
+
 export type MapScan = {
   id: string;
   latitude: number;
@@ -35,8 +42,18 @@ function dotIcon(color: string) {
   });
 }
 
+function plantIcon() {
+  return L.divIcon({
+    className: "",
+    html: `<div style="width:30px;height:30px;border-radius:9999px;background:#f59e0b;border:3px solid white;box-shadow:0 2px 5px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;font-size:16px;">☀️</div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+  });
+}
+
 const visitedIcon = dotIcon("#059669");
 const notVisitedIcon = dotIcon("#94a3b8");
+const plantMarkerIcon = plantIcon();
 const scanFlagColor: Record<string, string> = {
   ok: "#059669",
   attention: "#d97706",
@@ -66,11 +83,13 @@ function FitToData({ points, fallbackCenter }: { points: [number, number][]; fal
 
 export default function PlantMap({
   center,
+  plants = [],
   equipment,
   scans,
   showTrajectory,
 }: {
   center: [number, number];
+  plants?: MapPlant[];
   equipment: MapEquipment[];
   scans: MapScan[];
   showTrajectory: boolean;
@@ -80,6 +99,7 @@ export default function PlantMap({
     .map((s) => [s.latitude, s.longitude]);
 
   const allPoints: [number, number][] = [
+    ...plants.map((p) => [p.latitude, p.longitude] as [number, number]),
     ...equipment.map((eq) => [eq.latitude, eq.longitude] as [number, number]),
     ...scans.map((s) => [s.latitude, s.longitude] as [number, number]),
   ];
@@ -92,6 +112,16 @@ export default function PlantMap({
       />
 
       <FitToData points={allPoints} fallbackCenter={center} />
+
+      {plants.map((p) => (
+        <Marker key={p.id} position={[p.latitude, p.longitude]} icon={plantMarkerIcon} zIndexOffset={1000}>
+          <Popup>
+            <strong>☀️ {p.name}</strong>
+            <br />
+            Usina
+          </Popup>
+        </Marker>
+      ))}
 
       {equipment.map((eq) => (
         <Marker key={eq.id} position={[eq.latitude, eq.longitude]} icon={eq.visited ? visitedIcon : notVisitedIcon}>
