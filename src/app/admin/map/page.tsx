@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import type { MapEquipment, MapPlant, MapScan } from "@/components/PlantMap";
+import type { MapEquipment, MapMaintenance, MapPlant, MapScan } from "@/components/PlantMap";
+import { FREQUENCY_LABELS, REVIEW_STATUS_LABELS, type MaintenanceFrequency, type ReviewStatus } from "@/lib/maintenanceSchedule";
 
 const PlantMap = dynamic(() => import("@/components/PlantMap"), { ssr: false });
 
 type Plant = { id: string; name: string; latitude: number; longitude: number };
 type Equipment = { id: string; name: string; code: string; latitude: number; longitude: number; plantId: string };
+type UserOption = { id: string; name: string; role: string };
 type Scan = {
   id: string;
   latitude: number;
@@ -21,11 +23,27 @@ type Scan = {
   equipment: { name: string };
   user: { name: string };
 };
+type MaintenanceExecution = {
+  id: string;
+  latitude: number | null;
+  longitude: number | null;
+  completedAt: string | null;
+  notes: string | null;
+  photoUrls: string[];
+  reviewStatus: ReviewStatus | null;
+  user: { id: string; name: string } | null;
+  task: { title: string; frequency: MaintenanceFrequency };
+};
 
-function todayRange() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return { from: start.toISOString(), to: new Date(start.getTime() + 86400000).toISOString() };
+function dayRange(dateStr: string) {
+  const start = new Date(`${dateStr}T00:00:00`);
+  const end = new Date(`${dateStr}T23:59:59.999`);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export default function MapPage() {
@@ -33,7 +51,13 @@ export default function MapPage() {
   const [plantId, setPlantId] = useState<string>("");
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [scans, setScans] = useState<Scan[]>([]);
+  const [maintenanceExecutions, setMaintenanceExecutions] = useState<MaintenanceExecution[]>([]);
   const [showTrajectory, setShowTrajectory] = useState(true);
+
+  const [users, setUsers] = useState<UserOption[]>([]);
+  const [date, setDate] = useState(todayStr());
+  const [vigilanteId, setVigilanteId] = useState("");
+  const [technicianId, setTechnicianId] = useState("");
 
   useEffect(() => {
     fetch("/api/plants")
@@ -42,6 +66,9 @@ export default function MapPage() {
         setPlants(d.plants ?? []);
         if (d.plants?.[0]) setPlantId(d.plants[0].id);
       });
+    fetch("/api/users")
+      .then((r) => r.json())
+      .then((d) => setUsers(d.users ?? []));
   }, []);
 
   useEffect(() => {
@@ -49,12 +76,26 @@ export default function MapPage() {
     fetch(`/api/equipment?plantId=${plantId}`)
       .then((r) => r.json())
       .then((d) => setEquipment(d.equipment ?? []));
+  }, [plantId]);
 
-    const { from, to } = todayRange();
-    fetch(`/api/scans?plantId=${plantId}&from=${from}&to=${to}`)
+  useEffect(() => {
+    if (!plantId) return;
+    const { from, to } = dayRange(date);
+    const scanParams = new URLSearchParams({ plantId, from, to });
+    if (vigilanteId) scanParams.set("userId", vigilanteId);
+    fetch(`/api/scans?${scanParams.toString()}`)
       .then((r) => r.json())
       .then((d) => setScans(d.scans ?? []));
-  }, [plantId]);
+
+    const maintParams = new URLSearchParams({ plantId, from, to, status: "CONCLUIDA" });
+    if (technicianId) maintParams.set("userId", technicianId);
+    fetch(`/api/maintenance/executions?${maintParams.toString()}`)
+      .then((r) => r.json())
+      .then((d) => setMaintenanceExecutions(d.executions ?? []));
+  }, [plantId, date, vigilanteId, technicianId]);
+
+  const vigilantes = useMemo(() => users.filter((u) => u.role === "VIGILANTE"), [users]);
+  const technicians = useMemo(() => users.filter((u) => u.role === "TECNICO_MANUTENCAO"), [users]);
 
   const visitedEquipmentIds = useMemo(() => new Set(scans.map((s) => s.equipmentId)), [scans]);
   const selectedPlant = plants.find((p) => p.id === plantId);
@@ -83,30 +124,74 @@ export default function MapPage() {
     notes: s.notes,
   }));
 
+  const mapMaintenance: MapMaintenance[] = maintenanceExecutions
+    .filter((m): m is MaintenanceExecution & { latitude: number; longitude: number; completedAt: string } =>
+      m.latitude != null && m.longitude != null && m.completedAt != null
+    )
+    .map((m) => ({
+      id: m.id,
+      latitude: m.latitude,
+      longitude: m.longitude,
+      completedAt: m.completedAt,
+      taskTitle: m.task.title,
+      frequencyLabel: FREQUENCY_LABELS[m.task.frequency],
+      technicianName: m.user?.name ?? "—",
+      notes: m.notes,
+      photoUrls: m.photoUrls,
+      reviewStatusLabel: m.reviewStatus ? REVIEW_STATUS_LABELS[m.reviewStatus] : null,
+    }));
+
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col gap-4 md:h-[calc(100vh-2rem)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Mapa e Trajeto</h1>
-          <p className="text-sm text-slate-500">Leituras de hoje — pontos visitados e trajeto percorrido</p>
+          <p className="text-sm text-slate-500">Leituras de vigilância e execuções de manutenção no dia selecionado</p>
         </div>
-        <div className="flex items-center gap-3">
-          <select
-            value={plantId}
-            onChange={(e) => setPlantId(e.target.value)}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          >
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <MapFilterField label="Usina">
+          <select value={plantId} onChange={(e) => setPlantId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
             {plants.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <input type="checkbox" checked={showTrajectory} onChange={(e) => setShowTrajectory(e.target.checked)} />
-            Mostrar trajeto
-          </label>
-        </div>
+        </MapFilterField>
+        <MapFilterField label="Data">
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        </MapFilterField>
+        <MapFilterField label="Vigilante">
+          <select value={vigilanteId} onChange={(e) => setVigilanteId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            <option value="">Todos</option>
+            {vigilantes.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </MapFilterField>
+        <MapFilterField label="Técnico">
+          <select value={technicianId} onChange={(e) => setTechnicianId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            <option value="">Todos</option>
+            {technicians.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </MapFilterField>
+        {date !== todayStr() && (
+          <button onClick={() => setDate(todayStr())} className="rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50">
+            Voltar para hoje
+          </button>
+        )}
+        <label className="ml-auto flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" checked={showTrajectory} onChange={(e) => setShowTrajectory(e.target.checked)} />
+          Mostrar trajeto
+        </label>
       </div>
 
       <div className="flex flex-wrap gap-4 text-xs text-slate-500">
@@ -115,6 +200,7 @@ export default function MapPage() {
         <Legend color="#94a3b8" label="Equipamento não visitado" />
         <Legend color="#d97706" label="Leitura com atenção (distância)" />
         <Legend color="#dc2626" label="Leitura inconsistente" />
+        <Legend color="#7c3aed" label="Manutenção executada" emoji="🔧" />
       </div>
 
       <div className="flex-1 overflow-hidden rounded-xl border border-slate-200 shadow-sm">
@@ -124,10 +210,20 @@ export default function MapPage() {
             plants={mapPlants}
             equipment={mapEquipment}
             scans={mapScans}
+            maintenance={mapMaintenance}
             showTrajectory={showTrajectory}
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function MapFilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="mb-1 block text-[11px] font-medium text-slate-500">{label}</label>
+      {children}
     </div>
   );
 }

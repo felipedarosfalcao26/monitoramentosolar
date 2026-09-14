@@ -33,6 +33,19 @@ export type MapScan = {
   notes?: string | null;
 };
 
+export type MapMaintenance = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  completedAt: string;
+  taskTitle: string;
+  frequencyLabel: string;
+  technicianName: string;
+  notes?: string | null;
+  photoUrls?: string[];
+  reviewStatusLabel?: string | null;
+};
+
 function dotIcon(color: string) {
   return L.divIcon({
     className: "",
@@ -51,9 +64,19 @@ function plantIcon() {
   });
 }
 
+function maintenanceIcon() {
+  return L.divIcon({
+    className: "",
+    html: `<div style="width:24px;height:24px;border-radius:9999px;background:#7c3aed;border:2.5px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;font-size:12px;">🔧</div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  });
+}
+
 const visitedIcon = dotIcon("#059669");
 const notVisitedIcon = dotIcon("#94a3b8");
 const plantMarkerIcon = plantIcon();
+const maintenanceMarkerIcon = maintenanceIcon();
 const scanFlagColor: Record<string, string> = {
   ok: "#059669",
   attention: "#d97706",
@@ -86,12 +109,14 @@ export default function PlantMap({
   plants = [],
   equipment,
   scans,
+  maintenance = [],
   showTrajectory,
 }: {
   center: [number, number];
   plants?: MapPlant[];
   equipment: MapEquipment[];
   scans: MapScan[];
+  maintenance?: MapMaintenance[];
   showTrajectory: boolean;
 }) {
   const trajectory: [number, number][] = [...scans]
@@ -102,6 +127,7 @@ export default function PlantMap({
     ...plants.map((p) => [p.latitude, p.longitude] as [number, number]),
     ...equipment.map((eq) => [eq.latitude, eq.longitude] as [number, number]),
     ...scans.map((s) => [s.latitude, s.longitude] as [number, number]),
+    ...maintenance.map((m) => [m.latitude, m.longitude] as [number, number]),
   ];
 
   return (
@@ -171,6 +197,45 @@ export default function PlantMap({
             </div>
           </Popup>
         </CircleMarker>
+      ))}
+
+      {maintenance.map((m) => (
+        <Marker key={m.id} position={[m.latitude, m.longitude]} icon={maintenanceMarkerIcon}>
+          <Popup>
+            <div style={{ minWidth: 160 }}>
+              <strong>🔧 {m.taskTitle}</strong>
+              <br />
+              {m.frequencyLabel} · {m.technicianName}
+              <br />
+              {new Date(m.completedAt).toLocaleString("pt-BR")}
+              {m.reviewStatusLabel && (
+                <>
+                  <br />
+                  <em>Gestor: {m.reviewStatusLabel}</em>
+                </>
+              )}
+              {m.notes && (
+                <>
+                  <br />
+                  <em>{m.notes}</em>
+                </>
+              )}
+              {m.photoUrls && m.photoUrls.length > 0 && (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={m.photoUrls[0]}
+                    alt="Foto da atividade"
+                    style={{ marginTop: 6, width: "100%", maxWidth: 200, borderRadius: 6 }}
+                  />
+                  {m.photoUrls.length > 1 && (
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>+{m.photoUrls.length - 1} foto(s)</div>
+                  )}
+                </>
+              )}
+            </div>
+          </Popup>
+        </Marker>
       ))}
 
       {showTrajectory && trajectory.length > 1 && (

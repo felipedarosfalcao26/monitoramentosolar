@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import type { MapEquipment, MapPlant, MapScan } from "@/components/PlantMap";
+import type { MapEquipment, MapMaintenance, MapPlant, MapScan } from "@/components/PlantMap";
+import { FREQUENCY_LABELS, REVIEW_STATUS_LABELS, type MaintenanceFrequency, type ReviewStatus } from "@/lib/maintenanceSchedule";
 
 const PlantMap = dynamic(() => import("@/components/PlantMap"), { ssr: false });
 
@@ -66,6 +67,18 @@ type Scan = {
   user: { name: string };
 };
 
+type LiveMaintenanceExecution = {
+  id: string;
+  latitude: number | null;
+  longitude: number | null;
+  completedAt: string | null;
+  notes: string | null;
+  photoUrls: string[];
+  reviewStatus: ReviewStatus | null;
+  user: { id: string; name: string } | null;
+  task: { title: string; frequency: MaintenanceFrequency };
+};
+
 type MaintenanceStats = {
   total: number;
   overall: { PENDENTE: number; EM_ANDAMENTO: number; CONCLUIDA: number; ATRASADA: number; CANCELADA: number };
@@ -90,6 +103,7 @@ export default function DashboardPage() {
   const [livePlantId, setLivePlantId] = useState("");
   const [liveEquipment, setLiveEquipment] = useState<Equipment[]>([]);
   const [liveScans, setLiveScans] = useState<Scan[]>([]);
+  const [liveMaintenance, setLiveMaintenance] = useState<LiveMaintenanceExecution[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [secondsToRefresh, setSecondsToRefresh] = useState(LIVE_REFRESH_SECONDS);
 
@@ -127,14 +141,17 @@ export default function DashboardPage() {
   const loadLiveMap = useCallback(async () => {
     if (!livePlantId) return;
     const { from, to } = todayRange();
-    const [eqRes, scanRes] = await Promise.all([
+    const [eqRes, scanRes, maintRes] = await Promise.all([
       fetch(`/api/equipment?plantId=${livePlantId}`),
       fetch(`/api/scans?plantId=${livePlantId}&from=${from}&to=${to}`),
+      fetch(`/api/maintenance/executions?plantId=${livePlantId}&from=${from}&to=${to}&status=CONCLUIDA`),
     ]);
     const eqData = await eqRes.json();
     const scanData = await scanRes.json();
+    const maintData = await maintRes.json();
     setLiveEquipment(eqData.equipment ?? []);
     setLiveScans(scanData.scans ?? []);
+    setLiveMaintenance(maintData.executions ?? []);
     setLastUpdated(new Date());
     setSecondsToRefresh(LIVE_REFRESH_SECONDS);
   }, [livePlantId]);
@@ -176,6 +193,23 @@ export default function DashboardPage() {
     photoUrls: s.photoUrls?.length ? s.photoUrls : s.photoUrl ? [s.photoUrl] : [],
     notes: s.notes,
   }));
+
+  const mapMaintenance: MapMaintenance[] = liveMaintenance
+    .filter((m): m is LiveMaintenanceExecution & { latitude: number; longitude: number; completedAt: string } =>
+      m.latitude != null && m.longitude != null && m.completedAt != null
+    )
+    .map((m) => ({
+      id: m.id,
+      latitude: m.latitude,
+      longitude: m.longitude,
+      completedAt: m.completedAt,
+      taskTitle: m.task.title,
+      frequencyLabel: FREQUENCY_LABELS[m.task.frequency],
+      technicianName: m.user?.name ?? "—",
+      notes: m.notes,
+      photoUrls: m.photoUrls,
+      reviewStatusLabel: m.reviewStatus ? REVIEW_STATUS_LABELS[m.reviewStatus] : null,
+    }));
 
   if (!summary) {
     return <p className="text-sm text-slate-500">Carregando...</p>;
@@ -303,9 +337,16 @@ export default function DashboardPage() {
               plants={mapPlants}
               equipment={mapEquipment}
               scans={mapScans}
+              maintenance={mapMaintenance}
               showTrajectory={false}
             />
           )}
+        </div>
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+          <span className="flex h-2.5 w-2.5 items-center justify-center rounded-full text-[6px]" style={{ backgroundColor: "#7c3aed" }}>
+            🔧
+          </span>
+          Manutenção executada hoje
         </div>
       </div>
 
