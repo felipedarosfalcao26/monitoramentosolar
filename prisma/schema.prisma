@@ -27,6 +27,7 @@ model User {
 
   maintenanceTasksAssigned MaintenanceTask[]      @relation("MaintenanceAssignee")
   maintenanceExecutions    MaintenanceExecution[]
+  maintenanceReviews       MaintenanceExecution[] @relation("MaintenanceReviewer")
 
   @@index([role])
 }
@@ -306,11 +307,16 @@ model MaintenanceExecution {
   distanceFlag           String?
   notes                  String?
   photoUrls              String[]  @default([])
+  reviewStatus           String?   // "APROVADO" | "REPROVADO" | "CORRIGIR" — set by a Gestor/Admin reviewing a CONCLUIDA execution
+  reviewNotes            String?
+  reviewedBy             String?
+  reviewedAt             DateTime?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
-  task MaintenanceTask @relation(fields: [taskId], references: [id])
-  user User?           @relation(fields: [userId], references: [id])
+  task     MaintenanceTask @relation(fields: [taskId], references: [id])
+  user     User?           @relation(fields: [userId], references: [id])
+  reviewer User?           @relation("MaintenanceReviewer", fields: [reviewedBy], references: [id])
 
   @@unique([taskId, periodKey])
   @@index([status])

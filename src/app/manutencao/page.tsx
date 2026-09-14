@@ -5,15 +5,31 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import MultiPhotoInput from "@/components/MultiPhotoInput";
 import { uploadPhotos } from "@/lib/uploadPhoto";
-import { FREQUENCY_LABELS, STATUS_LABELS, type MaintenanceFrequency, type MaintenanceStatus } from "@/lib/maintenanceSchedule";
+import {
+  FREQUENCY_LABELS,
+  STATUS_LABELS,
+  REVIEW_STATUS_LABELS,
+  type MaintenanceFrequency,
+  type MaintenanceStatus,
+  type ReviewStatus,
+} from "@/lib/maintenanceSchedule";
 
 const QrScanner = dynamic(() => import("@/components/QrScanner"), { ssr: false });
+
+type Plant = { id: string; name: string };
 
 type Execution = {
   id: string;
   status: MaintenanceStatus;
   dueDate: string;
   notes: string | null;
+  photoUrls: string[];
+  completedAt: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  reviewStatus: ReviewStatus | null;
+  reviewNotes: string | null;
+  reviewer?: { id: string; name: string } | null;
   task: {
     id: string;
     title: string;
@@ -25,7 +41,9 @@ type Execution = {
   };
 };
 
-type Step = "loading" | "list" | "detail" | "scanning" | "locating" | "form" | "submitting" | "done" | "error";
+type Step = "loading" | "list" | "detail" | "scanning" | "locating" | "form" | "submitting" | "location-error" | "error";
+
+const LAST_PLANT_KEY = "vistoria-solar:manutencao-last-plant-id";
 
 function extractToken(raw: string): string {
   try {
@@ -46,10 +64,18 @@ const STATUS_COLOR: Record<MaintenanceStatus, string> = {
   CANCELADA: "bg-white/5 text-slate-500",
 };
 
+const REVIEW_COLOR: Record<ReviewStatus, string> = {
+  APROVADO: "bg-emerald-100 text-emerald-700",
+  REPROVADO: "bg-red-100 text-red-700",
+  CORRIGIR: "bg-amber-100 text-amber-700",
+};
+
 export default function MaintenancePage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("loading");
   const [userName, setUserName] = useState("");
+  const [plants, setPlants] = useState<Plant[]>([]);
+  const [plantId, setPlantId] = useState("");
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [selected, setSelected] = useState<Execution | null>(null);
   const [qrToken, setQrToken] = useState<string | null>(null);
@@ -58,8 +84,9 @@ export default function MaintenancePage() {
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const loadToday = useCallback(async () => {
-    const res = await fetch("/api/maintenance/today");
+  const loadToday = useCallback(async (forPlantId?: string) => {
+    const params = forPlantId ? `?plantId=${forPlantId}` : "";
+    const res = await fetch(`/api/maintenance/today${params}`);
     const data = await res.json();
     setExecutions(data.executions ?? []);
   }, []);
@@ -68,8 +95,36 @@ export default function MaintenancePage() {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => setUserName(d.user?.name ?? ""));
-    loadToday().then(() => setStep("list"));
+
+    fetch("/api/plants")
+      .then((r) => r.json())
+      .then(async (d) => {
+        const list: Plant[] = d.plants ?? [];
+        setPlants(list);
+        let initial = "";
+        try {
+          const saved = localStorage.getItem(LAST_PLANT_KEY);
+          if (saved && list.some((p) => p.id === saved)) initial = saved;
+        } catch {
+          // ignore
+        }
+        setPlantId(initial);
+        await loadToday(initial || undefined);
+        setStep("list");
+      });
   }, [loadToday]);
+
+  function changePlant(id: string) {
+    setPlantId(id);
+    try {
+      if (id) localStorage.setItem(LAST_PLANT_KEY, id);
+      else localStorage.removeItem(LAST_PLANT_KEY);
+    } catch {
+      // ignore
+    }
+    setStep("loading");
+    loadToday(id || undefined).then(() => setStep("list"));
+  }
 
   function openDetail(ex: Execution) {
     setSelected(ex);
@@ -84,7 +139,7 @@ export default function MaintenancePage() {
   function backToList() {
     setSelected(null);
     setStep("list");
-    loadToday();
+    loadToday(plantId || undefined);
   }
 
   async function beginExecution() {
@@ -104,7 +159,8 @@ export default function MaintenancePage() {
   function captureLocationThenForm() {
     setStep("locating");
     if (!("geolocation" in navigator)) {
-      setStep("form");
+      setError("Este dispositivo não tem suporte a geolocalização. Não é possível concluir a atividade.");
+      setStep("location-error");
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -112,7 +168,10 @@ export default function MaintenancePage() {
         setCoords({ latitude: position.coords.latitude, longitude: position.coords.longitude });
         setStep("form");
       },
-      () => setStep("form"),
+      () => {
+        setError("Permissão de localização negada. Ative o GPS e permita o acesso à localização para registrar a atividade.");
+        setStep("location-error");
+      },
       { enableHighAccuracy: true, timeout: 15000 }
     );
   }
@@ -123,7 +182,7 @@ export default function MaintenancePage() {
   }
 
   async function submitCompletion() {
-    if (!selected) return;
+    if (!selected || !coords) return;
     setStep("submitting");
     setError(null);
 
@@ -140,8 +199,8 @@ export default function MaintenancePage() {
       body: JSON.stringify({
         action: "complete",
         qrToken: qrToken ?? undefined,
-        latitude: coords?.latitude,
-        longitude: coords?.longitude,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
         notes: notes || undefined,
         photoUrls,
       }),
@@ -152,7 +211,7 @@ export default function MaintenancePage() {
       setStep("form");
       return;
     }
-    setStep("done");
+    openDetail({ ...selected, ...data.execution });
   }
 
   async function logout() {
@@ -162,6 +221,7 @@ export default function MaintenancePage() {
   }
 
   const pendingCount = executions.filter((e) => e.status === "PENDENTE" || e.status === "ATRASADA").length;
+  const isCompleted = selected && (selected.status === "CONCLUIDA" || selected.status === "CANCELADA");
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 text-white">
@@ -190,12 +250,28 @@ export default function MaintenancePage() {
 
         {step === "list" && (
           <div className="w-full max-w-md">
-            <div className="mb-5 text-center">
+            <div className="mb-4 text-center">
               <h1 className="text-xl font-semibold">Atividades de Hoje</h1>
               <p className="mt-1 text-sm text-slate-400">
                 {pendingCount > 0 ? `${pendingCount} atividade(s) aguardando execução` : "Tudo em dia por aqui"}
               </p>
             </div>
+
+            {plants.length > 1 && (
+              <select
+                value={plantId}
+                onChange={(e) => changePlant(e.target.value)}
+                className="mb-4 w-full rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-2.5 text-sm"
+              >
+                <option value="">Todas as usinas</option>
+                {plants.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <div className="space-y-2.5">
               {executions.map((ex) => (
                 <button
@@ -215,6 +291,11 @@ export default function MaintenancePage() {
                     {ex.task.equipment ? ` · 📷 ${ex.task.equipment.name}` : " · sem QR Code"} · prazo{" "}
                     {new Date(ex.dueDate).toLocaleDateString("pt-BR")}
                   </p>
+                  {ex.reviewStatus && (
+                    <span className={`mt-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${REVIEW_COLOR[ex.reviewStatus]}`}>
+                      Gestor: {REVIEW_STATUS_LABELS[ex.reviewStatus]}
+                    </span>
+                  )}
                 </button>
               ))}
               {executions.length === 0 && (
@@ -224,12 +305,10 @@ export default function MaintenancePage() {
           </div>
         )}
 
-        {step === "detail" && selected && (
+        {step === "detail" && selected && !isCompleted && (
           <div className="flex w-full max-w-md flex-1 flex-col justify-center">
             <div className="rounded-2xl bg-white p-5 text-slate-900 shadow-xl">
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[selected.status].replace("text-slate-300", "text-slate-600").replace("bg-white/10", "bg-slate-100")}`}>
-                {STATUS_LABELS[selected.status]}
-              </span>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">{STATUS_LABELS[selected.status]}</span>
               <h2 className="mt-2 text-base font-semibold">{selected.task.title}</h2>
               {selected.task.description && <p className="mt-1 text-sm text-slate-600">{selected.task.description}</p>}
               <dl className="mt-3 space-y-1.5 text-sm">
@@ -243,6 +322,7 @@ export default function MaintenancePage() {
                   📷 Esta atividade exige a leitura do QR Code do equipamento no local.
                 </p>
               )}
+              <p className="mt-3 rounded-lg bg-blue-50 p-2.5 text-xs text-blue-700">📍 Sua localização será registrada ao concluir.</p>
               <div className="mt-5 flex gap-2">
                 <button onClick={backToList} className="flex-1 rounded-xl border border-slate-300 py-3 text-sm font-medium text-slate-700">
                   Voltar
@@ -254,6 +334,62 @@ export default function MaintenancePage() {
                   {selected.task.equipment ? "Ler QR Code" : "Iniciar"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {step === "detail" && selected && isCompleted && (
+          <div className="flex w-full max-w-md flex-1 flex-col justify-center py-6">
+            <div className="rounded-2xl bg-white p-5 text-slate-900 shadow-xl">
+              <div className="mb-2 flex items-center gap-2">
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[selected.status].replace("text-slate-300", "text-slate-600").replace("bg-white/10", "bg-slate-100")}`}>
+                  {STATUS_LABELS[selected.status]}
+                </span>
+                {selected.reviewStatus && (
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_COLOR[selected.reviewStatus]}`}>
+                    Gestor: {REVIEW_STATUS_LABELS[selected.reviewStatus]}
+                  </span>
+                )}
+              </div>
+              <h2 className="text-base font-semibold">{selected.task.title}</h2>
+              <dl className="mt-3 space-y-1.5 text-sm">
+                <Row label="Usina" value={selected.task.plant.name} />
+                <Row label="Concluída em" value={selected.completedAt ? new Date(selected.completedAt).toLocaleString("pt-BR") : "—"} />
+                <Row
+                  label="Localização registrada"
+                  value={selected.latitude != null && selected.longitude != null ? `${selected.latitude.toFixed(6)}, ${selected.longitude.toFixed(6)}` : "—"}
+                />
+              </dl>
+
+              {selected.notes && (
+                <div className="mt-3">
+                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Observações registradas</p>
+                  <p className="rounded-lg bg-slate-50 p-2.5 text-sm text-slate-700">{selected.notes}</p>
+                </div>
+              )}
+
+              {selected.photoUrls.length > 0 && (
+                <div className="mt-3">
+                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Fotos ({selected.photoUrls.length})</p>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {selected.photoUrls.map((url, i) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={i} src={url} alt={`Foto ${i + 1}`} className="h-20 w-full rounded-lg object-cover" />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selected.reviewNotes && (
+                <div className="mt-3">
+                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Comentário do gestor</p>
+                  <p className="rounded-lg bg-amber-50 p-2.5 text-sm text-amber-800">{selected.reviewNotes}</p>
+                </div>
+              )}
+
+              <button onClick={backToList} className="mt-5 w-full rounded-xl border border-slate-300 py-3 text-sm font-medium text-slate-700">
+                Voltar
+              </button>
             </div>
           </div>
         )}
@@ -277,10 +413,32 @@ export default function MaintenancePage() {
           </div>
         )}
 
+        {step === "location-error" && selected && (
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center text-slate-900 shadow-xl">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-red-100 text-3xl text-red-600">!</div>
+            <h2 className="text-lg font-semibold">Localização necessária</h2>
+            <p className="mt-2 text-sm text-slate-600">{error}</p>
+            <button
+              onClick={captureLocationThenForm}
+              className="mt-6 w-full rounded-xl bg-blue-600 py-3 text-sm font-medium text-white hover:bg-blue-500"
+            >
+              Tentar novamente
+            </button>
+            <button onClick={() => openDetail(selected)} className="mt-2 w-full rounded-xl border border-slate-300 py-3 text-sm text-slate-700">
+              Voltar
+            </button>
+          </div>
+        )}
+
         {step === "form" && selected && (
           <div className="w-full max-w-md rounded-2xl bg-white p-5 text-slate-900 shadow-xl">
             <h2 className="text-base font-semibold">Registrar execução</h2>
             <p className="text-sm text-slate-500">{selected.task.title}</p>
+            {coords && (
+              <p className="mt-1 text-xs text-emerald-600">
+                📍 Localização capturada: {coords.latitude.toFixed(6)}, {coords.longitude.toFixed(6)}
+              </p>
+            )}
 
             <div className="mt-4">
               <label className="mb-1 block text-xs font-medium text-slate-600">Fotos do serviço (opcional)</label>
@@ -319,24 +477,6 @@ export default function MaintenancePage() {
             <div>
               <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-emerald-400" />
               <p className="text-sm text-slate-300">Registrando atividade...</p>
-            </div>
-          </div>
-        )}
-
-        {step === "done" && (
-          <div className="flex flex-1 items-center justify-center">
-            <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center text-slate-900 shadow-xl">
-              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-3xl text-emerald-600">
-                ✓
-              </div>
-              <h2 className="text-lg font-semibold">Atividade concluída</h2>
-              <p className="mt-2 text-sm text-slate-500">Registro salvo com sucesso.</p>
-              <button
-                onClick={backToList}
-                className="mt-6 w-full rounded-xl bg-slate-900 py-3.5 text-sm font-medium text-white hover:bg-slate-800 active:scale-[0.98]"
-              >
-                Voltar às atividades
-              </button>
             </div>
           </div>
         )}

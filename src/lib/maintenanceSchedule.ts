@@ -21,6 +21,15 @@ export const STATUS_LABELS: Record<MaintenanceStatus, string> = {
   CANCELADA: "Cancelada",
 };
 
+export const REVIEW_STATUSES = ["APROVADO", "REPROVADO", "CORRIGIR"] as const;
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
+
+export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
+  APROVADO: "Aprovado",
+  REPROVADO: "Reprovado",
+  CORRIGIR: "Corrigir",
+};
+
 function pad(n: number) {
   return String(n).padStart(2, "0");
 }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { classifyDistance, haversineDistanceMeters } from "@/lib/geo";
-import { MAINTENANCE_STATUSES } from "@/lib/maintenanceSchedule";
+import { MAINTENANCE_STATUSES, REVIEW_STATUSES } from "@/lib/maintenanceSchedule";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -14,6 +14,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     where: { id },
     include: {
       user: { select: { id: true, name: true } },
+      reviewer: { select: { id: true, name: true } },
       task: {
         include: {
           plant: { select: { id: true, name: true } },
@@ -27,7 +28,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 }
 
 const patchSchema = z.object({
-  action: z.enum(["start", "complete"]).optional(),
+  action: z.enum(["start", "complete", "review"]).optional(),
   qrToken: z.string().optional(),
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
@@ -35,6 +36,8 @@ const patchSchema = z.object({
   photoUrls: z.array(z.string()).optional(),
   status: z.enum(MAINTENANCE_STATUSES).optional(),
   userId: z.string().nullable().optional(),
+  reviewStatus: z.enum(REVIEW_STATUSES).optional(),
+  reviewNotes: z.string().nullable().optional(),
 });
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -67,6 +70,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   if (action === "complete") {
+    if (latitude === undefined || longitude === undefined) {
+      return NextResponse.json(
+        { error: "É necessário compartilhar sua localização para concluir esta atividade" },
+        { status: 400 }
+      );
+    }
     if (existing.task.equipmentId) {
       if (!qrToken) {
         return NextResponse.json({ error: "É necessário ler o QR Code do equipamento para concluir esta atividade" }, { status: 400 });
@@ -100,6 +109,36 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         distanceFlag,
         notes: notes ?? existing.notes,
         photoUrls: photoUrls ?? existing.photoUrls,
+      },
+    });
+    return NextResponse.json({ execution });
+  }
+
+  if (action === "review") {
+    if (isFieldRole) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    if (existing.status !== "CONCLUIDA") {
+      return NextResponse.json({ error: "Só é possível avaliar atividades concluídas" }, { status: 400 });
+    }
+    if (!parsed.data.reviewStatus) {
+      return NextResponse.json({ error: "Informe o resultado da avaliação" }, { status: 400 });
+    }
+    const execution = await prisma.maintenanceExecution.update({
+      where: { id },
+      data: {
+        reviewStatus: parsed.data.reviewStatus,
+        reviewNotes: parsed.data.reviewNotes ?? null,
+        reviewedBy: session.sub,
+        reviewedAt: new Date(),
+      },
+    });
+    await prisma.auditLog.create({
+      data: {
+        userId: session.sub,
+        action: "REVIEW",
+        entity: "MaintenanceExecution",
+        entityId: id,
+        before: existing.reviewStatus,
+        after: parsed.data.reviewStatus,
       },
     });
     return NextResponse.json({ execution });

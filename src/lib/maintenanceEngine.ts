@@ -28,19 +28,26 @@ export async function getCurrentExecutions(where: Prisma.MaintenanceTaskWhereInp
 
   const executions = await Promise.all(
     dueTasks.map(async ({ task, period }) => {
+      const reviewerInclude = { reviewer: { select: { id: true, name: true } } } as const;
       let execution = await prisma.maintenanceExecution.findUnique({
         where: { taskId_periodKey: { taskId: task.id, periodKey: period.key } },
+        include: reviewerInclude,
       });
 
       if (!execution) {
         execution = await prisma.maintenanceExecution.create({
           data: { taskId: task.id, periodKey: period.key, dueDate: period.dueDate, status: "PENDENTE" },
+          include: reviewerInclude,
         });
       } else if (
         (execution.status === "PENDENTE" || execution.status === "EM_ANDAMENTO") &&
         now.getTime() > execution.dueDate.getTime()
       ) {
-        execution = await prisma.maintenanceExecution.update({ where: { id: execution.id }, data: { status: "ATRASADA" } });
+        execution = await prisma.maintenanceExecution.update({
+          where: { id: execution.id },
+          data: { status: "ATRASADA" },
+          include: reviewerInclude,
+        });
       }
 
       return { ...execution, task };

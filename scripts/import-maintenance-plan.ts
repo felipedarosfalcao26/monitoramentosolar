@@ -160,9 +160,13 @@ async function main() {
 
   console.log(`Lidas ${parsed.length} atividades distintas da planilha.`);
 
+  // Match by code first, but fall back to an existing plant with the same
+  // name — the code passed on the command line is just a guess and must
+  // never cause a same-plant duplicate (it happened once already).
   let plant = await prisma.plant.findUnique({ where: { code: plantCode } });
+  if (!plant) plant = await prisma.plant.findFirst({ where: { name: plantName } });
   if (!plant) {
-    console.log(`Usina "${plantName}" (${plantCode}) não encontrada — criando com coordenadas provisórias.`);
+    console.log(`Usina "${plantName}" não encontrada — criando com coordenadas provisórias.`);
     plant = await prisma.plant.create({
       data: {
         name: plantName,
