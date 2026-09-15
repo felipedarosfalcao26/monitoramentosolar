@@ -5,6 +5,17 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import type { MapEquipment, MapMaintenance, MapPlant, MapScan } from "@/components/PlantMap";
 import { FREQUENCY_LABELS, REVIEW_STATUS_LABELS, type MaintenanceFrequency, type ReviewStatus } from "@/lib/maintenanceSchedule";
+import KpiCard from "@/components/KpiCard";
+import {
+  DashboardIcon,
+  EquipmentIcon,
+  MaintenanceIcon,
+  OccurrenceIcon,
+  PlantIcon,
+  RouteIcon,
+  ShieldIcon,
+  UsersIcon,
+} from "@/components/icons";
 
 const PlantMap = dynamic(() => import("@/components/PlantMap"), { ssr: false });
 
@@ -29,9 +40,9 @@ type Summary = {
 
 const FLAG_LABEL: Record<string, string> = { ok: "OK", attention: "Atenção", inconsistent: "Inconsistente" };
 const FLAG_COLOR: Record<string, string> = {
-  ok: "bg-emerald-100 text-emerald-700",
-  attention: "bg-amber-100 text-amber-700",
-  inconsistent: "bg-red-100 text-red-700",
+  ok: "bg-emerald-50 text-emerald-700",
+  attention: "bg-amber-50 text-amber-700",
+  inconsistent: "bg-red-50 text-red-700",
 };
 
 type Alert = {
@@ -212,58 +223,59 @@ export default function DashboardPage() {
     }));
 
   if (!summary) {
-    return <p className="text-sm text-slate-500">Carregando...</p>;
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-slate-200 border-t-accent-600" />
+      </div>
+    );
   }
-
-  const cards = [
-    { label: "Leituras hoje", value: summary.scansToday },
-    { label: "Total de leituras", value: summary.totalScans },
-    { label: "Pontos visitados hoje", value: summary.equipmentVisitedToday },
-    { label: "Pontos não visitados hoje", value: summary.equipmentNotVisitedToday },
-    { label: "Usinas cadastradas", value: summary.totalPlants },
-    { label: "Equipamentos cadastrados", value: summary.totalEquipment },
-    { label: "Usuários ativos", value: summary.totalUsers },
-  ];
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500">Visão geral da operação de vigilância</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Dashboard</h1>
+        <p className="text-sm text-slate-500">Visão geral da operação em tempo real</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {cards.map((c) => (
-          <div key={c.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-2xl font-semibold text-slate-900">{c.value}</p>
-            <p className="mt-1 text-xs text-slate-500">{c.label}</p>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiCard label="Leituras hoje" value={summary.scansToday} icon={ShieldIcon} tone="accent" />
+        <KpiCard label="Total de leituras" value={summary.totalScans} icon={DashboardIcon} tone="slate" />
+        <KpiCard label="Pontos visitados hoje" value={summary.equipmentVisitedToday} icon={EquipmentIcon} tone="emerald" />
+        <KpiCard label="Pontos não visitados hoje" value={summary.equipmentNotVisitedToday} icon={EquipmentIcon} tone="amber" />
+        <KpiCard label="Usinas cadastradas" value={summary.totalPlants} icon={PlantIcon} tone="slate" href="/admin/plants" />
+        <KpiCard label="Equipamentos cadastrados" value={summary.totalEquipment} icon={RouteIcon} tone="slate" href="/admin/equipment" />
+        <KpiCard label="Usuários ativos" value={summary.totalUsers} icon={UsersIcon} tone="slate" href="/admin/users" />
+        <KpiCard label="Alertas abertos" value={alerts.length} icon={OccurrenceIcon} tone={alerts.length > 0 ? "red" : "slate"} />
       </div>
 
       {maintenance && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-900">🛠️ Manutenção — atividades de hoje</h2>
-            <Link href="/admin/maintenance" className="text-xs text-slate-500 underline">
-              Ver plano completo
+        <div className="card-shadow rounded-2xl border border-slate-200/70 bg-white p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+                <MaintenanceIcon className="h-4 w-4" />
+              </div>
+              <h2 className="text-sm font-semibold text-slate-900">Manutenção — atividades de hoje</h2>
+            </div>
+            <Link href="/admin/maintenance" className="text-xs font-medium text-accent-600 hover:text-accent-700">
+              Ver plano completo →
             </Link>
           </div>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <div className="rounded-lg bg-slate-50 p-3">
-              <p className="text-xl font-semibold text-slate-700">{maintenance.overall.PENDENTE}</p>
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="tabular-nums text-xl font-semibold text-slate-700">{maintenance.overall.PENDENTE}</p>
               <p className="text-xs text-slate-500">Pendentes</p>
             </div>
-            <div className="rounded-lg bg-blue-50 p-3">
-              <p className="text-xl font-semibold text-blue-600">{maintenance.overall.EM_ANDAMENTO}</p>
+            <div className="rounded-xl bg-accent-50 p-3">
+              <p className="tabular-nums text-xl font-semibold text-accent-600">{maintenance.overall.EM_ANDAMENTO}</p>
               <p className="text-xs text-slate-500">Em andamento</p>
             </div>
-            <div className="rounded-lg bg-emerald-50 p-3">
-              <p className="text-xl font-semibold text-emerald-600">{maintenance.overall.CONCLUIDA}</p>
+            <div className="rounded-xl bg-emerald-50 p-3">
+              <p className="tabular-nums text-xl font-semibold text-emerald-600">{maintenance.overall.CONCLUIDA}</p>
               <p className="text-xs text-slate-500">Concluídas</p>
             </div>
-            <div className="rounded-lg bg-red-50 p-3">
-              <p className="text-xl font-semibold text-red-600">{maintenance.overall.ATRASADA}</p>
+            <div className="rounded-xl bg-red-50 p-3">
+              <p className="tabular-nums text-xl font-semibold text-red-600">{maintenance.overall.ATRASADA}</p>
               <p className="text-xs text-slate-500">Atrasadas</p>
             </div>
           </div>
@@ -304,7 +316,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="card-shadow rounded-2xl border border-slate-200/70 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
@@ -317,7 +329,7 @@ export default function DashboardPage() {
             <select
               value={livePlantId}
               onChange={(e) => setLivePlantId(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm transition-colors focus:border-accent-500 focus:outline-none focus:ring-1 focus:ring-accent-500"
             >
               {plants.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -325,12 +337,12 @@ export default function DashboardPage() {
                 </option>
               ))}
             </select>
-            <span className="text-xs text-slate-400">
+            <span className="tabular-nums text-xs text-slate-400">
               {lastUpdated ? `Atualizado ${lastUpdated.toLocaleTimeString("pt-BR")}` : "Carregando..."} · próxima em {secondsToRefresh}s
             </span>
           </div>
         </div>
-        <div className="h-[420px] overflow-hidden rounded-lg border border-slate-100">
+        <div className="h-[420px] overflow-hidden rounded-xl border border-slate-100">
           {selectedLivePlant && (
             <PlantMap
               center={[selectedLivePlant.latitude, selectedLivePlant.longitude]}
@@ -343,38 +355,34 @@ export default function DashboardPage() {
           )}
         </div>
         <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
-          <span className="flex h-2.5 w-2.5 items-center justify-center rounded-full text-[6px]" style={{ backgroundColor: "#7c3aed" }}>
-            🔧
-          </span>
+          <span className="h-2 w-2 rounded-full bg-violet-500" />
           Manutenção executada hoje
         </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm md:col-span-2">
+        <div className="card-shadow rounded-2xl border border-slate-200/70 bg-white p-5 md:col-span-2">
           <h2 className="mb-3 text-sm font-semibold text-slate-900">Leituras recentes</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-xs uppercase text-slate-400">
-                  <th className="py-2 pr-4">Horário</th>
-                  <th className="py-2 pr-4">Usuário</th>
-                  <th className="py-2 pr-4">Equipamento</th>
-                  <th className="py-2 pr-4">Usina</th>
-                  <th className="py-2">Status</th>
+                <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                  <th className="py-2 pr-4 font-medium">Horário</th>
+                  <th className="py-2 pr-4 font-medium">Usuário</th>
+                  <th className="py-2 pr-4 font-medium">Equipamento</th>
+                  <th className="py-2 pr-4 font-medium">Usina</th>
+                  <th className="py-2 font-medium">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {summary.recentScans.map((s) => (
-                  <tr key={s.id} className="border-b border-slate-50">
-                    <td className="py-2 pr-4 whitespace-nowrap">{new Date(s.scannedAt).toLocaleString("pt-BR")}</td>
-                    <td className="py-2 pr-4">{s.user.name}</td>
-                    <td className="py-2 pr-4">{s.equipment.name}</td>
-                    <td className="py-2 pr-4">{s.plant.name}</td>
+                  <tr key={s.id} className="border-b border-slate-50 transition-colors hover:bg-slate-50/70">
+                    <td className="tabular-nums py-2 pr-4 whitespace-nowrap text-slate-600">{new Date(s.scannedAt).toLocaleString("pt-BR")}</td>
+                    <td className="py-2 pr-4 text-slate-700">{s.user.name}</td>
+                    <td className="py-2 pr-4 text-slate-700">{s.equipment.name}</td>
+                    <td className="py-2 pr-4 text-slate-500">{s.plant.name}</td>
                     <td className="py-2">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${FLAG_COLOR[s.distanceFlag ?? "ok"]}`}
-                      >
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${FLAG_COLOR[s.distanceFlag ?? "ok"]}`}>
                         {FLAG_LABEL[s.distanceFlag ?? "ok"]}
                       </span>
                     </td>
@@ -393,14 +401,14 @@ export default function DashboardPage() {
         </div>
 
         <div className="space-y-6">
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="card-shadow rounded-2xl border border-slate-200/70 bg-white p-5">
             <h2 className="mb-3 text-sm font-semibold text-slate-900">Alertas abertos</h2>
             <div className="space-y-2">
               {alerts.map((a) => (
                 <div key={a.id} className={`rounded-lg border-l-4 bg-slate-50 p-2.5 text-xs ${ALERT_SEVERITY_COLOR[a.severity]}`}>
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-slate-700">{a.message}</p>
-                    <button onClick={() => resolveAlert(a.id)} className="shrink-0 text-slate-400 underline hover:text-slate-600">
+                    <button onClick={() => resolveAlert(a.id)} className="shrink-0 font-medium text-accent-600 hover:text-accent-700">
                       resolver
                     </button>
                   </div>
@@ -413,25 +421,43 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="card-shadow rounded-2xl border border-slate-200/70 bg-white p-5">
             <h2 className="mb-3 text-sm font-semibold text-slate-900">Atalhos</h2>
-            <div className="space-y-2 text-sm">
-              <Link href="/admin/plants" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+            <div className="space-y-1.5 text-sm">
+              <Link
+                href="/admin/plants"
+                className="block rounded-lg border border-slate-200 px-3 py-2 text-slate-700 transition-colors hover:border-accent-200 hover:bg-accent-50/60"
+              >
                 + Nova usina
               </Link>
-              <Link href="/admin/equipment" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <Link
+                href="/admin/equipment"
+                className="block rounded-lg border border-slate-200 px-3 py-2 text-slate-700 transition-colors hover:border-accent-200 hover:bg-accent-50/60"
+              >
                 + Novo equipamento / QR Code
               </Link>
-              <Link href="/admin/routes" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <Link
+                href="/admin/routes"
+                className="block rounded-lg border border-slate-200 px-3 py-2 text-slate-700 transition-colors hover:border-accent-200 hover:bg-accent-50/60"
+              >
                 + Nova rota de inspeção
               </Link>
-              <Link href="/admin/maintenance" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <Link
+                href="/admin/maintenance"
+                className="block rounded-lg border border-slate-200 px-3 py-2 text-slate-700 transition-colors hover:border-accent-200 hover:bg-accent-50/60"
+              >
                 + Nova atividade de manutenção
               </Link>
-              <Link href="/admin/map" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <Link
+                href="/admin/map"
+                className="block rounded-lg border border-slate-200 px-3 py-2 text-slate-700 transition-colors hover:border-accent-200 hover:bg-accent-50/60"
+              >
                 Ver mapa e trajetos
               </Link>
-              <Link href="/admin/reports" className="block rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <Link
+                href="/admin/reports"
+                className="block rounded-lg border border-slate-200 px-3 py-2 text-slate-700 transition-colors hover:border-accent-200 hover:bg-accent-50/60"
+              >
                 Gerar relatório
               </Link>
             </div>
