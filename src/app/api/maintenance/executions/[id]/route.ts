@@ -109,6 +109,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         distanceFlag,
         notes: notes ?? existing.notes,
         photoUrls: photoUrls ?? existing.photoUrls,
+        // A fresh completion always needs a fresh look from the gestor —
+        // clear any verdict left over from a previous (corrected/rejected) attempt.
+        reviewStatus: null,
+        reviewNotes: null,
+        reviewedBy: null,
+        reviewedAt: null,
       },
     });
     return NextResponse.json({ execution });
@@ -122,6 +128,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!parsed.data.reviewStatus) {
       return NextResponse.json({ error: "Informe o resultado da avaliação" }, { status: 400 });
     }
+    // Sending it back for correction or rejecting it reopens the activity —
+    // the technician sees it as PENDENTE again and must redo it.
+    const needsRedo = parsed.data.reviewStatus === "CORRIGIR" || parsed.data.reviewStatus === "REPROVADO";
     const execution = await prisma.maintenanceExecution.update({
       where: { id },
       data: {
@@ -129,6 +138,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         reviewNotes: parsed.data.reviewNotes ?? null,
         reviewedBy: session.sub,
         reviewedAt: new Date(),
+        ...(needsRedo ? { status: "PENDENTE", completedAt: null, startedAt: null } : {}),
       },
     });
     await prisma.auditLog.create({

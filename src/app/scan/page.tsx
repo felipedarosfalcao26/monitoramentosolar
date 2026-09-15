@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import OccurrenceForm from "@/components/OccurrenceForm";
@@ -323,6 +323,24 @@ function ScanPageInner() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, round]);
+
+  // Keep a ref so the unload listener (attached once) always sees the
+  // latest round without needing to be re-attached on every state change.
+  const roundRef = useRef(round);
+  roundRef.current = round;
+
+  useEffect(() => {
+    function endActiveRoundViaBeacon() {
+      const active = roundRef.current;
+      if (active) navigator.sendBeacon(`/api/rounds/${active.id}`);
+    }
+    window.addEventListener("pagehide", endActiveRoundViaBeacon);
+    window.addEventListener("beforeunload", endActiveRoundViaBeacon);
+    return () => {
+      window.removeEventListener("pagehide", endActiveRoundViaBeacon);
+      window.removeEventListener("beforeunload", endActiveRoundViaBeacon);
+    };
+  }, []);
 
   function reset() {
     setStep("home");

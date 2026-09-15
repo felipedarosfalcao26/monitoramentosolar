@@ -57,6 +57,13 @@ type Execution = {
   };
 };
 
+type RoundSummary = {
+  id: string;
+  startedAt: string;
+  user: { name: string };
+  route: { name: string } | null;
+};
+
 type Stats = {
   total: number;
   overall: Record<MaintenanceStatus, number>;
@@ -180,6 +187,7 @@ export default function MaintenancePage() {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [calendarExecutions, setCalendarExecutions] = useState<Execution[]>([]);
+  const [calendarRounds, setCalendarRounds] = useState<RoundSummary[]>([]);
 
   function loadTasks() {
     fetch("/api/maintenance/tasks")
@@ -245,6 +253,12 @@ export default function MaintenancePage() {
     fetch(`/api/maintenance/executions?${params.toString()}`)
       .then((r) => r.json())
       .then((d) => setCalendarExecutions(d.executions ?? []));
+
+    const roundParams = new URLSearchParams({ from: monthStart.toISOString(), to: monthEnd.toISOString() });
+    if (calendarPlantId) roundParams.set("plantId", calendarPlantId);
+    fetch(`/api/rounds?${roundParams.toString()}`)
+      .then((r) => r.json())
+      .then((d) => setCalendarRounds(d.rounds ?? []));
   }, [calendarMonth, calendarPlantId]);
 
   useEffect(() => {
@@ -393,39 +407,56 @@ export default function MaintenancePage() {
 
   const isFilteringToday = execFilters.date === todayStr();
 
-  const calendarDays = useMemo(() => {
+type CalendarCell = {
+  day: number | null;
+  overdue: number;
+  maintTitles: string[];
+  roundLabels: string[];
+};
+
+  const calendarDays = useMemo((): CalendarCell[] => {
     const year = calendarMonth.getFullYear();
     const month = calendarMonth.getMonth();
     const firstWeekday = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-    const dueByDay = new Map<number, number>();
-    const completedByDay = new Map<number, number>();
+    const maintByDay = new Map<number, string[]>();
     const overdueByDay = new Map<number, number>();
+    const roundsByDay = new Map<number, string[]>();
 
     for (const ex of calendarExecutions) {
       const due = new Date(ex.dueDate);
       if (due.getFullYear() === year && due.getMonth() === month) {
         const d = due.getDate();
-        dueByDay.set(d, (dueByDay.get(d) ?? 0) + 1);
+        const titles = maintByDay.get(d) ?? [];
+        titles.push(ex.task.title);
+        maintByDay.set(d, titles);
         if (ex.status === "ATRASADA") overdueByDay.set(d, (overdueByDay.get(d) ?? 0) + 1);
-      }
-      if (ex.completedAt) {
-        const completed = new Date(ex.completedAt);
-        if (completed.getFullYear() === year && completed.getMonth() === month) {
-          const d = completed.getDate();
-          completedByDay.set(d, (completedByDay.get(d) ?? 0) + 1);
-        }
       }
     }
 
-    const cells: { day: number | null; due: number; completed: number; overdue: number }[] = [];
-    for (let i = 0; i < firstWeekday; i++) cells.push({ day: null, due: 0, completed: 0, overdue: 0 });
+    for (const round of calendarRounds) {
+      const started = new Date(round.startedAt);
+      if (started.getFullYear() === year && started.getMonth() === month) {
+        const d = started.getDate();
+        const labels = roundsByDay.get(d) ?? [];
+        labels.push(round.route?.name ? `${round.route.name} — ${round.user.name}` : `Ronda livre — ${round.user.name}`);
+        roundsByDay.set(d, labels);
+      }
+    }
+
+    const cells: CalendarCell[] = [];
+    for (let i = 0; i < firstWeekday; i++) cells.push({ day: null, overdue: 0, maintTitles: [], roundLabels: [] });
     for (let d = 1; d <= daysInMonth; d++) {
-      cells.push({ day: d, due: dueByDay.get(d) ?? 0, completed: completedByDay.get(d) ?? 0, overdue: overdueByDay.get(d) ?? 0 });
+      cells.push({
+        day: d,
+        overdue: overdueByDay.get(d) ?? 0,
+        maintTitles: maintByDay.get(d) ?? [],
+        roundLabels: roundsByDay.get(d) ?? [],
+      });
     }
     return cells;
-  }, [calendarMonth, calendarExecutions]);
+  }, [calendarMonth, calendarExecutions, calendarRounds]);
 
   return (
     <div className="space-y-6">
@@ -631,12 +662,12 @@ export default function MaintenancePage() {
               </div>
             </div>
 
-            <div className="mb-2 flex gap-3 text-[11px] text-slate-500">
+            <div className="mb-2 flex flex-wrap gap-3 text-[11px] text-slate-500">
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full bg-slate-400" /> Previstas
+                <span className="h-2 w-2 rounded-full bg-violet-500" /> Manutenção (técnicos)
               </span>
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" /> Executadas
+                <span className="h-2 w-2 rounded-full bg-blue-500" /> Rondas (vigilantes)
               </span>
               <span className="flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-red-500" /> Atrasadas
@@ -653,7 +684,7 @@ export default function MaintenancePage() {
             <div className="grid grid-cols-7 gap-1">
               {calendarDays.map((cell, i) =>
                 cell.day === null ? (
-                  <div key={i} className="aspect-square rounded-lg" />
+                  <div key={i} className="min-h-[76px] rounded-lg" />
                 ) : (
                   <button
                     key={i}
@@ -663,14 +694,25 @@ export default function MaintenancePage() {
                         calendarPlantId
                       )
                     }
-                    className="flex aspect-square flex-col items-center justify-center gap-0.5 rounded-lg border border-slate-100 text-xs hover:border-slate-300 hover:bg-slate-50"
+                    className="flex min-h-[76px] flex-col items-stretch gap-0.5 rounded-lg border border-slate-100 p-1 text-left text-[10px] hover:border-slate-300 hover:bg-slate-50"
                   >
-                    <span className="font-medium text-slate-700">{cell.day}</span>
-                    <span className="flex gap-0.5">
-                      {cell.due > 0 && <span className="h-1.5 w-1.5 rounded-full bg-slate-400" title={`${cell.due} previstas`} />}
-                      {cell.completed > 0 && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title={`${cell.completed} executadas`} />}
-                      {cell.overdue > 0 && <span className="h-1.5 w-1.5 rounded-full bg-red-500" title={`${cell.overdue} atrasadas`} />}
-                    </span>
+                    <span className={`text-xs font-medium ${cell.overdue > 0 ? "text-red-600" : "text-slate-700"}`}>{cell.day}</span>
+                    {cell.maintTitles.slice(0, 1).map((title, idx) => (
+                      <span key={idx} className="truncate rounded bg-violet-100 px-1 py-0.5 text-violet-700" title={title}>
+                        🔧 {title}
+                      </span>
+                    ))}
+                    {cell.maintTitles.length > 1 && (
+                      <span className="rounded bg-violet-50 px-1 py-0.5 text-violet-500">+{cell.maintTitles.length - 1} manutenção</span>
+                    )}
+                    {cell.roundLabels.slice(0, 1).map((label, idx) => (
+                      <span key={idx} className="truncate rounded bg-blue-100 px-1 py-0.5 text-blue-700" title={label}>
+                        🚶 {label}
+                      </span>
+                    ))}
+                    {cell.roundLabels.length > 1 && (
+                      <span className="rounded bg-blue-50 px-1 py-0.5 text-blue-500">+{cell.roundLabels.length - 1} ronda(s)</span>
+                    )}
                   </button>
                 )
               )}

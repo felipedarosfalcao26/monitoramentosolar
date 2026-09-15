@@ -42,8 +42,56 @@ type Execution = {
 };
 
 type Step = "loading" | "list" | "detail" | "scanning" | "locating" | "form" | "submitting" | "location-error" | "error";
+type Period = "HOJE" | "SEMANA" | "MES" | "SEMESTRE" | "DATA";
 
 const LAST_PLANT_KEY = "vistoria-solar:manutencao-last-plant-id";
+
+const PERIOD_LABELS: Record<Period, string> = {
+  HOJE: "Hoje",
+  SEMANA: "Esta semana",
+  MES: "Este mês",
+  SEMESTRE: "Este semestre",
+  DATA: "Data específica",
+};
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function isoRange(start: Date, end: Date) {
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+/** Date range covered by each quick period filter, anchored on today (or a chosen date for "DATA"). */
+function computePeriodRange(period: Period, customDate: string) {
+  const now = period === "DATA" ? new Date(`${customDate}T12:00:00`) : new Date();
+
+  if (period === "HOJE" || period === "DATA") {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return isoRange(start, end);
+  }
+  if (period === "SEMANA") {
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+    return isoRange(monday, sunday);
+  }
+  if (period === "MES") {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    return isoRange(start, end);
+  }
+  // SEMESTRE
+  const half = now.getMonth() < 6 ? 0 : 6;
+  const start = new Date(now.getFullYear(), half, 1);
+  const end = new Date(now.getFullYear(), half + 6, 0, 23, 59, 59, 999);
+  return isoRange(start, end);
+}
 
 function extractToken(raw: string): string {
   try {
@@ -73,9 +121,12 @@ const REVIEW_COLOR: Record<ReviewStatus, string> = {
 export default function MaintenancePage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("loading");
+  const [ready, setReady] = useState(false);
   const [userName, setUserName] = useState("");
   const [plants, setPlants] = useState<Plant[]>([]);
   const [plantId, setPlantId] = useState("");
+  const [period, setPeriod] = useState<Period>("HOJE");
+  const [customDate, setCustomDate] = useState(todayStr());
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [selected, setSelected] = useState<Execution | null>(null);
   const [qrToken, setQrToken] = useState<string | null>(null);
@@ -84,12 +135,23 @@ export default function MaintenancePage() {
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const loadToday = useCallback(async (forPlantId?: string) => {
-    const params = forPlantId ? `?plantId=${forPlantId}` : "";
-    const res = await fetch(`/api/maintenance/today${params}`);
+  const loadExecutions = useCallback(async () => {
+    if (period === "HOJE") {
+      const params = plantId ? `?plantId=${plantId}` : "";
+      const res = await fetch(`/api/maintenance/today${params}`);
+      const data = await res.json();
+      setExecutions(data.executions ?? []);
+      return;
+    }
+    // Make sure today's own periods exist too, so "esta semana"/"este mês" etc. include today's due tasks.
+    await fetch(`/api/maintenance/today${plantId ? `?plantId=${plantId}` : ""}`);
+    const { from, to } = computePeriodRange(period, customDate);
+    const params = new URLSearchParams({ from, to });
+    if (plantId) params.set("plantId", plantId);
+    const res = await fetch(`/api/maintenance/executions?${params.toString()}`);
     const data = await res.json();
     setExecutions(data.executions ?? []);
-  }, []);
+  }, [plantId, period, customDate]);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -98,7 +160,7 @@ export default function MaintenancePage() {
 
     fetch("/api/plants")
       .then((r) => r.json())
-      .then(async (d) => {
+      .then((d) => {
         const list: Plant[] = d.plants ?? [];
         setPlants(list);
         let initial = "";
@@ -109,10 +171,16 @@ export default function MaintenancePage() {
           // ignore
         }
         setPlantId(initial);
-        await loadToday(initial || undefined);
-        setStep("list");
+        setReady(true);
       });
-  }, [loadToday]);
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    setStep("loading");
+    loadExecutions().then(() => setStep("list"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, plantId, period, customDate]);
 
   function changePlant(id: string) {
     setPlantId(id);
@@ -122,8 +190,6 @@ export default function MaintenancePage() {
     } catch {
       // ignore
     }
-    setStep("loading");
-    loadToday(id || undefined).then(() => setStep("list"));
   }
 
   function openDetail(ex: Execution) {
@@ -139,7 +205,7 @@ export default function MaintenancePage() {
   function backToList() {
     setSelected(null);
     setStep("list");
-    loadToday(plantId || undefined);
+    loadExecutions();
   }
 
   async function beginExecution() {
@@ -222,6 +288,7 @@ export default function MaintenancePage() {
 
   const pendingCount = executions.filter((e) => e.status === "PENDENTE" || e.status === "ATRASADA").length;
   const isCompleted = selected && (selected.status === "CONCLUIDA" || selected.status === "CANCELADA");
+  const needsRedo = selected && (selected.reviewStatus === "CORRIGIR" || selected.reviewStatus === "REPROVADO") && !isCompleted;
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 text-white">
@@ -251,11 +318,34 @@ export default function MaintenancePage() {
         {step === "list" && (
           <div className="w-full max-w-md">
             <div className="mb-4 text-center">
-              <h1 className="text-xl font-semibold">Atividades de Hoje</h1>
+              <h1 className="text-xl font-semibold">Atividades — {PERIOD_LABELS[period]}</h1>
               <p className="mt-1 text-sm text-slate-400">
                 {pendingCount > 0 ? `${pendingCount} atividade(s) aguardando execução` : "Tudo em dia por aqui"}
               </p>
             </div>
+
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                    period === p ? "bg-blue-500 text-white" : "bg-white/5 text-slate-300"
+                  }`}
+                >
+                  {PERIOD_LABELS[p]}
+                </button>
+              ))}
+            </div>
+
+            {period === "DATA" && (
+              <input
+                type="date"
+                value={customDate}
+                onChange={(e) => setCustomDate(e.target.value)}
+                className="mb-3 w-full rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-2.5 text-sm"
+              />
+            )}
 
             {plants.length > 1 && (
               <select
@@ -299,7 +389,7 @@ export default function MaintenancePage() {
                 </button>
               ))}
               {executions.length === 0 && (
-                <p className="py-10 text-center text-sm text-slate-500">Nenhuma atividade de manutenção prevista para hoje.</p>
+                <p className="py-10 text-center text-sm text-slate-500">Nenhuma atividade de manutenção neste período.</p>
               )}
             </div>
           </div>
@@ -317,6 +407,14 @@ export default function MaintenancePage() {
                 <Row label="Frequência" value={FREQUENCY_LABELS[selected.task.frequency]} />
                 <Row label="Prazo" value={new Date(selected.dueDate).toLocaleDateString("pt-BR")} />
               </dl>
+              {needsRedo && (
+                <div className="mt-3 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-800">
+                  <p className="font-semibold">
+                    ⚠️ O gestor pediu para {selected.reviewStatus === "REPROVADO" ? "refazer" : "corrigir"} esta atividade.
+                  </p>
+                  {selected.reviewNotes && <p className="mt-1">{selected.reviewNotes}</p>}
+                </div>
+              )}
               {selected.task.equipment && (
                 <p className="mt-3 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700">
                   📷 Esta atividade exige a leitura do QR Code do equipamento no local.

@@ -20,16 +20,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 }
 
 /** Ends a round: computes visited/planned points, completion %, distance, and raises alerts. */
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-
-  const body = await request.json().catch(() => ({}));
-  if (body?.action !== "end") {
-    return NextResponse.json({ error: "Ação inválida" }, { status: 400 });
-  }
-
+async function endRound(id: string, session: { sub: string; role: string }) {
   const round = await prisma.round.findUnique({
     where: { id },
     include: { scans: true, route: { include: { points: true } } },
@@ -73,4 +64,30 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   return NextResponse.json({ round: updated });
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+
+  const body = await request.json().catch(() => ({}));
+  if (body?.action !== "end") {
+    return NextResponse.json({ error: "Ação inválida" }, { status: 400 });
+  }
+
+  return endRound(id, session);
+}
+
+/**
+ * Beacon-friendly variant of PATCH { action: "end" } — `navigator.sendBeacon`
+ * can only POST, so the vigilante's mobile page uses this on tab close /
+ * logout to make sure an in-progress round never gets left open.
+ */
+export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+
+  return endRound(id, session);
 }
