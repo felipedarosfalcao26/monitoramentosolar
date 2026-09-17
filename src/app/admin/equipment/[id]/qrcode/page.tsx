@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
+import { generateQrLabelPdf } from "@/lib/qrLabelPdf";
 
 type EquipmentDetail = {
   id: string;
@@ -15,6 +16,7 @@ export default function EquipmentQrCodePage({ params }: { params: Promise<{ id: 
   const { id } = use(params);
   const [equipment, setEquipment] = useState<EquipmentDetail | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
   function load() {
     fetch(`/api/equipment/${id}`)
@@ -38,6 +40,16 @@ export default function EquipmentQrCodePage({ params }: { params: Promise<{ id: 
   if (!equipment) return <p className="text-sm text-slate-500">Carregando...</p>;
 
   const token = equipment.qrCode?.token;
+
+  async function downloadPdf() {
+    if (!token || !equipment) return;
+    setGeneratingPdf(true);
+    try {
+      await generateQrLabelPdf({ code: equipment.code, name: equipment.name, plantName: equipment.plant.name, token });
+    } finally {
+      setGeneratingPdf(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-lg space-y-6">
@@ -68,6 +80,13 @@ export default function EquipmentQrCodePage({ params }: { params: Promise<{ id: 
 
       {token && (
         <div className="flex flex-wrap gap-3 print:hidden">
+          <button
+            onClick={downloadPdf}
+            disabled={generatingPdf}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            {generatingPdf ? "Gerando..." : "Baixar PDF para impressão"}
+          </button>
           <a
             href={`/api/qrcodes/${token}/image?format=png`}
             download={`qrcode-${equipment.code}.png`}

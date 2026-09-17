@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { generateQrLabelSheetPdf } from "@/lib/qrLabelPdf";
 
 type Plant = { id: string; name: string };
 type Equipment = {
@@ -53,6 +54,7 @@ export default function EquipmentPage() {
   const [filterPlantId, setFilterPlantId] = useState("");
   const [filterType, setFilterType] = useState("");
   const [search, setSearch] = useState("");
+  const [downloadingQrSheet, setDownloadingQrSheet] = useState(false);
 
   function load() {
     fetch("/api/equipment")
@@ -122,6 +124,19 @@ export default function EquipmentPage() {
   }
 
   const equipmentTypesInUse = Array.from(new Set(equipment.map((eq) => eq.type))).sort();
+
+  async function downloadQrSheet() {
+    const withQr = filteredEquipment.filter((eq): eq is Equipment & { qrCode: { token: string } } => eq.qrCode !== null);
+    if (withQr.length === 0) return;
+    setDownloadingQrSheet(true);
+    try {
+      await generateQrLabelSheetPdf(
+        withQr.map((eq) => ({ code: eq.code, name: eq.name, plantName: eq.plant.name, token: eq.qrCode.token }))
+      );
+    } finally {
+      setDownloadingQrSheet(false);
+    }
+  }
 
   const filteredEquipment = equipment.filter((eq) => {
     if (filterPlantId && eq.plant.id !== filterPlantId) return false;
@@ -256,6 +271,15 @@ export default function EquipmentPage() {
             Limpar filtros
           </button>
         )}
+        <button
+          onClick={downloadQrSheet}
+          disabled={downloadingQrSheet || filteredEquipment.every((eq) => eq.qrCode === null)}
+          className="ml-auto rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          {downloadingQrSheet
+            ? "Gerando PDF..."
+            : `Baixar QR Codes (PDF) — ${filteredEquipment.filter((eq) => eq.qrCode !== null).length}`}
+        </button>
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
