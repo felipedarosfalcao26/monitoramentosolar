@@ -4,12 +4,11 @@ import { getSession } from "@/lib/session";
 import { pickZoom, pixelX, pixelY, TILE_SIZE } from "@/lib/webMercator";
 
 const MAX_TILES = 64;
-const TILE_SERVERS = ["a", "b", "c"];
 
+/** Esri World Imagery uses z/y/x ordering (not z/x/y like OSM) and a single host. */
 async function fetchTile(z: number, x: number, y: number, wrapX: number): Promise<Buffer> {
-  const server = TILE_SERVERS[(x + y) % TILE_SERVERS.length];
   const wrappedX = ((x % wrapX) + wrapX) % wrapX;
-  const url = `https://${server}.tile.openstreetmap.org/${z}/${wrappedX}/${y}.png`;
+  const url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${wrappedX}`;
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "VistoriaSolar/1.0 (relatorio interno; contato via app)" },

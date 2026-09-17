@@ -166,12 +166,12 @@ export default function ScanDetailModal({
             )}
 
             <a
-              href={`https://www.openstreetmap.org/?mlat=${scan.latitude}&mlon=${scan.longitude}#map=18/${scan.latitude}/${scan.longitude}`}
+              href={`https://www.google.com/maps/@${scan.latitude},${scan.longitude},19z/data=!3m1!1e3`}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-4 block text-center text-sm text-emerald-700 underline"
             >
-              Ver localização no OpenStreetMap
+              Ver localização (imagem de satélite)
             </a>
 
             {canManage && (

@@ -198,6 +198,11 @@ async function drawPositionDiagram(doc: jsPDF, y: number, equipment: ReportEquip
   doc.circle(MARGIN + 62, legendY - 1.2, 1.6, "F");
   doc.text("Ponto de leitura registrado", MARGIN + 66, legendY);
 
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text("Imagem de satélite: Esri, Maxar, Earthstar Geographics", PAGE_WIDTH - MARGIN, legendY, { align: "right" });
+
   let afterY = legendY + 6;
   if (outsideCount > 0) {
     doc.setFont("helvetica", "italic");
