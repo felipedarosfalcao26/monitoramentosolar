@@ -110,6 +110,7 @@ export async function GET(request: NextRequest) {
   const equipmentId = searchParams.get("equipmentId") ?? undefined;
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  const reviewStatusParam = searchParams.get("reviewStatus");
 
   const scans = await prisma.scan.findMany({
     where: {
@@ -121,13 +122,16 @@ export async function GET(request: NextRequest) {
         gte: from ? new Date(from) : undefined,
         lte: to ? new Date(to) : undefined,
       },
+      reviewStatus: reviewStatusParam === "NAO_AVALIADO" ? null : reviewStatusParam ?? undefined,
     },
     orderBy: { scannedAt: "desc" },
     take: 1000,
     include: {
       user: { select: { id: true, name: true } },
+      reviewer: { select: { id: true, name: true } },
       equipment: { select: { id: true, name: true, code: true, latitude: true, longitude: true } },
       plant: { select: { id: true, name: true } },
+      round: { select: { id: true, route: { select: { name: true } } } },
     },
   });
 

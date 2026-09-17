@@ -10,6 +10,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     where: { id },
     include: {
       user: { select: { id: true, name: true } },
+      reviewer: { select: { id: true, name: true } },
       equipment: { select: { id: true, name: true, code: true, latitude: true, longitude: true } },
       plant: { select: { id: true, name: true } },
     },
@@ -19,12 +20,15 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 }
 
 const patchSchema = z.object({
+  action: z.enum(["review"]).optional(),
   scannedAt: z.string().optional(),
   latitude: z.coerce.number().min(-90).max(90).optional(),
   longitude: z.coerce.number().min(-180).max(180).optional(),
   notes: z.string().optional(),
   photoUrls: z.array(z.string()).optional(),
   equipmentId: z.string().optional(),
+  reviewStatus: z.enum(["APROVADO", "REPROVADO"]).optional(),
+  reviewNotes: z.string().nullable().optional(),
 });
 
 /** Back-office correction of a field-captured record. Every change is written to AuditLog. */
@@ -43,6 +47,38 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const existing = await prisma.scan.findUnique({ where: { id }, include: { equipment: true } });
   if (!existing) return NextResponse.json({ error: "Registro não encontrado" }, { status: 404 });
+
+  if (parsed.data.action === "review") {
+    if (!parsed.data.reviewStatus) {
+      return NextResponse.json({ error: "Informe o resultado da avaliação" }, { status: 400 });
+    }
+    const reviewed = await prisma.scan.update({
+      where: { id },
+      data: {
+        reviewStatus: parsed.data.reviewStatus,
+        reviewNotes: parsed.data.reviewNotes ?? null,
+        reviewedBy: session.sub,
+        reviewedAt: new Date(),
+      },
+      include: {
+        user: { select: { id: true, name: true } },
+        reviewer: { select: { id: true, name: true } },
+        equipment: { select: { id: true, name: true, code: true, latitude: true, longitude: true } },
+        plant: { select: { id: true, name: true } },
+      },
+    });
+    await prisma.auditLog.create({
+      data: {
+        userId: session.sub,
+        action: "REVIEW",
+        entity: "Scan",
+        entityId: id,
+        before: existing.reviewStatus,
+        after: parsed.data.reviewStatus,
+      },
+    });
+    return NextResponse.json({ scan: reviewed });
+  }
 
   const equipment = parsed.data.equipmentId
     ? await prisma.equipment.findUnique({ where: { id: parsed.data.equipmentId } })

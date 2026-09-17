@@ -21,6 +21,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   scans       Scan[]
+  scanReviews Scan[]       @relation("ScanReviewer")
   auditLogs   AuditLog[]
   rounds      Round[]
   occurrences Occurrence[]
@@ -121,12 +122,17 @@ model Scan {
   status                 String   @default("OK") // "OK" | "ANOMALIA"
   offlineCreatedAt       DateTime?
   syncedAt               DateTime?
+  reviewStatus           String?   // "APROVADO" | "REPROVADO" — set by a Gestor/Admin reviewing this point
+  reviewNotes            String?
+  reviewedBy             String?
+  reviewedAt             DateTime?
   createdAt              DateTime @default(now())
 
   user      User       @relation(fields: [userId], references: [id])
   plant     Plant      @relation(fields: [plantId], references: [id])
   equipment Equipment  @relation(fields: [equipmentId], references: [id])
   round     Round?     @relation(fields: [roundId], references: [id])
+  reviewer  User?      @relation("ScanReviewer", fields: [reviewedBy], references: [id])
   occurrences Occurrence[]
 
   @@index([plantId, scannedAt])

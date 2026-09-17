@@ -22,9 +22,18 @@ export type ScanDetail = {
   notes: string | null;
   photoUrl: string | null;
   photoUrls: string[];
+  reviewStatus?: "APROVADO" | "REPROVADO" | null;
+  reviewNotes?: string | null;
+  reviewer?: { id: string; name: string } | null;
   user: { name: string };
   equipment: { name: string; code: string };
   plant: { name: string };
+};
+
+const REVIEW_LABEL: Record<string, string> = { APROVADO: "Aprovado", REPROVADO: "Reprovado" };
+const REVIEW_COLOR: Record<string, string> = {
+  APROVADO: "bg-emerald-100 text-emerald-700",
+  REPROVADO: "bg-red-100 text-red-700",
 };
 
 function toDateTimeLocal(iso: string): string {
@@ -45,6 +54,11 @@ export default function ScanDetailModal({
   canManage?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const [reviewNotesDraft, setReviewNotesDraft] = useState(scan.reviewNotes ?? "");
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [localReview, setLocalReview] = useState<{ status: "APROVADO" | "REPROVADO"; notes: string | null; reviewerName: string } | null>(
+    null
+  );
   const [notes, setNotes] = useState(scan.notes ?? "");
   const [scannedAt, setScannedAt] = useState(toDateTimeLocal(scan.scannedAt));
   const [latitude, setLatitude] = useState(String(scan.latitude));
@@ -108,6 +122,28 @@ export default function ScanDetailModal({
     }
   }
 
+  async function submitReview(reviewStatus: "APROVADO" | "REPROVADO") {
+    setReviewSaving(true);
+    try {
+      const res = await fetch(`/api/scans/${scan.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "review", reviewStatus, reviewNotes: reviewNotesDraft || undefined }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setLocalReview({ status: reviewStatus, notes: reviewNotesDraft || null, reviewerName: data.scan.reviewer?.name ?? "" });
+        onChanged?.();
+      }
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
+  const effectiveReviewStatus = localReview?.status ?? scan.reviewStatus ?? null;
+  const effectiveReviewNotes = localReview ? localReview.notes : scan.reviewNotes;
+  const effectiveReviewerName = localReview?.reviewerName || scan.reviewer?.name;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
@@ -116,7 +152,14 @@ export default function ScanDetailModal({
       >
         <div className="mb-4 flex items-start justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">{editing ? "Editar Leitura" : "Detalhes da Leitura"}</h2>
+            <div className="mb-1 flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-slate-900">{editing ? "Editar Leitura" : "Detalhes da Leitura"}</h2>
+              {effectiveReviewStatus && (
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_COLOR[effectiveReviewStatus]}`}>
+                  {REVIEW_LABEL[effectiveReviewStatus]}
+                </span>
+              )}
+            </div>
             <p className="text-sm text-slate-500">
               {scan.equipment.name} ({scan.equipment.code})
             </p>
@@ -175,20 +218,56 @@ export default function ScanDetailModal({
             </a>
 
             {canManage && (
-              <div className="mt-5 flex gap-2 border-t border-slate-100 pt-4">
-                <button
-                  onClick={() => setEditing(true)}
-                  className="flex-1 rounded-lg border border-slate-300 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Editar
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="flex-1 rounded-lg border border-red-300 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
-                >
-                  {deleting ? "Excluindo..." : "Excluir"}
-                </button>
+              <div className="mt-5 border-t border-slate-100 pt-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Revisão do gestor</p>
+                {effectiveReviewerName && (
+                  <p className="mb-2 text-xs text-slate-400">
+                    Última avaliação por {effectiveReviewerName}
+                    {effectiveReviewStatus ? `: ${REVIEW_LABEL[effectiveReviewStatus]}` : ""}
+                  </p>
+                )}
+                {effectiveReviewNotes && !editing && (
+                  <p className="mb-2 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-800">{effectiveReviewNotes}</p>
+                )}
+                <textarea
+                  value={reviewNotesDraft}
+                  onChange={(e) => setReviewNotesDraft(e.target.value)}
+                  rows={2}
+                  placeholder="Comentário (opcional)"
+                  className="mb-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+                <div className="flex gap-2">
+                  <button
+                    disabled={reviewSaving}
+                    onClick={() => submitReview("APROVADO")}
+                    className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    ✓ Aprovar
+                  </button>
+                  <button
+                    disabled={reviewSaving}
+                    onClick={() => submitReview("REPROVADO")}
+                    className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+                  >
+                    ✕ Reprovar
+                  </button>
+                </div>
+
+                <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
+                  <button
+                    onClick={() => setEditing(true)}
+                    className="flex-1 rounded-lg border border-slate-300 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="flex-1 rounded-lg border border-red-300 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                  >
+                    {deleting ? "Excluindo..." : "Excluir"}
+                  </button>
+                </div>
               </div>
             )}
           </>
