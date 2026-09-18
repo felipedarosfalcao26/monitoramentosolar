@@ -13,7 +13,7 @@ type InspectionRoute = {
   toleranceMinutes: number;
   active: boolean;
   plant: { id: string; name: string };
-  points: { order: number; equipment: { id: string; name: string; code: string } }[];
+  points: { order: number; expectedTimeOfDay: string | null; equipment: { id: string; name: string; code: string } }[];
 };
 
 const DAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -25,6 +25,7 @@ export default function RoutesPage() {
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [routes, setRoutes] = useState<InspectionRoute[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [points, setPoints] = useState<RoutePointDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +78,28 @@ export default function RoutesPage() {
     }));
   }
 
+  function openCreate() {
+    setForm(emptyForm);
+    setPoints([]);
+    setEditingId(null);
+    setError(null);
+    setShowForm(true);
+  }
+
+  function openEdit(route: InspectionRoute) {
+    setForm({
+      plantId: route.plant.id,
+      name: route.name,
+      shift: route.shift ?? "NOITE",
+      toleranceMinutes: route.toleranceMinutes,
+      daysOfWeek: route.daysOfWeek.split(",").filter((d) => d !== "").map(Number),
+    });
+    setPoints(route.points.map((p) => ({ equipmentId: p.equipment.id, expectedTimeOfDay: p.expectedTimeOfDay ?? "" })));
+    setEditingId(route.id);
+    setError(null);
+    setShowForm(true);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -86,13 +109,14 @@ export default function RoutesPage() {
     }
     setSaving(true);
     try {
-      const res = await fetch("/api/routes", {
-        method: "POST",
+      const payload = {
+        ...form,
+        points: points.map((p, i) => ({ equipmentId: p.equipmentId, order: i + 1, expectedTimeOfDay: p.expectedTimeOfDay || undefined })),
+      };
+      const res = await fetch(editingId ? `/api/routes/${editingId}` : "/api/routes", {
+        method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          points: points.map((p, i) => ({ equipmentId: p.equipmentId, order: i + 1, expectedTimeOfDay: p.expectedTimeOfDay || undefined })),
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -101,6 +125,7 @@ export default function RoutesPage() {
       }
       setForm(emptyForm);
       setPoints([]);
+      setEditingId(null);
       setShowForm(false);
       load();
     } finally {
@@ -130,7 +155,7 @@ export default function RoutesPage() {
           <p className="text-sm text-slate-500">Sequências de pontos de inspeção para as rondas</p>
         </div>
         <button
-          onClick={() => setShowForm((v) => !v)}
+          onClick={() => (showForm ? setShowForm(false) : openCreate())}
           className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
         >
           {showForm ? "Cancelar" : "+ Nova rota"}
@@ -139,14 +164,16 @@ export default function RoutesPage() {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">{editingId ? "Editar rota" : "Nova rota"}</h2>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">Usina</label>
               <select
                 required
+                disabled={!!editingId}
                 value={form.plantId}
                 onChange={(e) => setForm({ ...form, plantId: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
               >
                 <option value="">Selecione...</option>
                 {plants.map((p) => (
@@ -155,6 +182,7 @@ export default function RoutesPage() {
                   </option>
                 ))}
               </select>
+              {editingId && <p className="mt-1 text-[11px] text-slate-400">Não é possível trocar a usina de uma rota existente.</p>}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">Nome da rota</label>
@@ -261,13 +289,27 @@ export default function RoutesPage() {
           </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
-          >
-            {saving ? "Salvando..." : "Salvar rota"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
+            >
+              {saving ? "Salvando..." : editingId ? "Salvar alterações" : "Salvar rota"}
+            </button>
+            {editingId && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(false);
+                  setEditingId(null);
+                }}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+            )}
+          </div>
         </form>
       )}
 
@@ -300,6 +342,9 @@ export default function RoutesPage() {
                   </span>
                 </td>
                 <td className="space-x-3 px-4 py-3 text-xs">
+                  <button onClick={() => openEdit(r)} className="text-slate-600 underline">
+                    Editar
+                  </button>
                   <button onClick={() => duplicate(r.id)} className="text-slate-600 underline">
                     Duplicar
                   </button>
