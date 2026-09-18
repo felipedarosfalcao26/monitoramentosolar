@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import MultiPhotoInput from "@/components/MultiPhotoInput";
 import { uploadPhotos } from "@/lib/uploadPhoto";
+import { countAllPending, flushPendingMaintenance, queueMaintenance } from "@/lib/offlineQueue";
 import {
   FREQUENCY_LABELS,
   STATUS_LABELS,
@@ -41,7 +42,7 @@ type Execution = {
   };
 };
 
-type Step = "loading" | "list" | "detail" | "scanning" | "locating" | "form" | "submitting" | "location-error" | "error";
+type Step = "loading" | "list" | "detail" | "scanning" | "locating" | "form" | "submitting" | "queued" | "location-error" | "error";
 type Period = "HOJE" | "SEMANA" | "MES" | "SEMESTRE" | "DATA";
 
 const LAST_PLANT_KEY = "vistoria-solar:manutencao-last-plant-id";
@@ -134,23 +135,56 @@ export default function MaintenancePage() {
   const [notes, setNotes] = useState("");
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [pendingSync, setPendingSync] = useState(0);
+  const [isOnline, setIsOnline] = useState(true);
+
+  const refreshPendingCount = useCallback(() => {
+    countAllPending().then(setPendingSync);
+  }, []);
+
+  const trySync = useCallback(async () => {
+    const { synced } = await flushPendingMaintenance();
+    if (synced > 0) refreshPendingCount();
+  }, [refreshPendingCount]);
+
+  useEffect(() => {
+    refreshPendingCount();
+    setIsOnline(navigator.onLine);
+    const onOnline = () => {
+      setIsOnline(true);
+      trySync();
+    };
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    trySync();
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, [refreshPendingCount, trySync]);
 
   const loadExecutions = useCallback(async () => {
-    if (period === "HOJE") {
-      const params = plantId ? `?plantId=${plantId}` : "";
-      const res = await fetch(`/api/maintenance/today${params}`);
+    try {
+      if (period === "HOJE") {
+        const params = plantId ? `?plantId=${plantId}` : "";
+        const res = await fetch(`/api/maintenance/today${params}`);
+        const data = await res.json();
+        setExecutions(data.executions ?? []);
+        return;
+      }
+      // Make sure today's own periods exist too, so "esta semana"/"este mês" etc. include today's due tasks.
+      await fetch(`/api/maintenance/today${plantId ? `?plantId=${plantId}` : ""}`);
+      const { from, to } = computePeriodRange(period, customDate);
+      const params = new URLSearchParams({ from, to });
+      if (plantId) params.set("plantId", plantId);
+      const res = await fetch(`/api/maintenance/executions?${params.toString()}`);
       const data = await res.json();
       setExecutions(data.executions ?? []);
-      return;
+    } catch {
+      // Offline with nothing loaded yet, or the connection dropped mid-request —
+      // keep whatever was already on screen instead of wiping the list.
     }
-    // Make sure today's own periods exist too, so "esta semana"/"este mês" etc. include today's due tasks.
-    await fetch(`/api/maintenance/today${plantId ? `?plantId=${plantId}` : ""}`);
-    const { from, to } = computePeriodRange(period, customDate);
-    const params = new URLSearchParams({ from, to });
-    if (plantId) params.set("plantId", plantId);
-    const res = await fetch(`/api/maintenance/executions?${params.toString()}`);
-    const data = await res.json();
-    setExecutions(data.executions ?? []);
   }, [plantId, period, customDate]);
 
   useEffect(() => {
@@ -178,7 +212,7 @@ export default function MaintenancePage() {
   useEffect(() => {
     if (!ready) return;
     setStep("loading");
-    loadExecutions().then(() => setStep("list"));
+    loadExecutions().finally(() => setStep("list"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, plantId, period, customDate]);
 
@@ -210,11 +244,18 @@ export default function MaintenancePage() {
 
   async function beginExecution() {
     if (!selected) return;
-    await fetch(`/api/maintenance/executions/${selected.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "start" }),
-    });
+    // Best-effort only — "em andamento" is just a status hint, and the eventual
+    // completion (online or queued) is what actually matters, so a failed/offline
+    // "start" call should never block the technician from continuing.
+    try {
+      await fetch(`/api/maintenance/executions/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start" }),
+      });
+    } catch {
+      // ignore — offline
+    }
     if (selected.task.equipment) {
       setStep("scanning");
     } else {
@@ -247,37 +288,64 @@ export default function MaintenancePage() {
     captureLocationThenForm();
   }
 
+  async function queueCompletionOffline() {
+    if (!selected || !coords) return;
+    await queueMaintenance({
+      id: crypto.randomUUID(),
+      executionId: selected.id,
+      taskTitle: selected.task.title,
+      qrToken: qrToken ?? undefined,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      notes: notes || undefined,
+      photoBlobs: photoFiles,
+      offlineCreatedAt: new Date().toISOString(),
+    });
+    refreshPendingCount();
+    setStep("queued");
+  }
+
   async function submitCompletion() {
     if (!selected || !coords) return;
     setStep("submitting");
     setError(null);
 
-    const { urls: photoUrls, error: uploadError } = await uploadPhotos(photoFiles);
-    if (uploadError) {
-      setError(uploadError);
-      setStep("form");
+    // Offline-first: photos are only uploaded on the online path — the offline
+    // path stores the raw files locally and uploads them once back online.
+    if (!navigator.onLine) {
+      await queueCompletionOffline();
       return;
     }
 
-    const res = await fetch(`/api/maintenance/executions/${selected.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "complete",
-        qrToken: qrToken ?? undefined,
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        notes: notes || undefined,
-        photoUrls,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error ?? "Não foi possível registrar a atividade");
-      setStep("form");
+    const { urls: photoUrls, error: uploadError } = await uploadPhotos(photoFiles);
+    if (uploadError) {
+      await queueCompletionOffline();
       return;
     }
-    openDetail({ ...selected, ...data.execution });
+
+    try {
+      const res = await fetch(`/api/maintenance/executions/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "complete",
+          qrToken: qrToken ?? undefined,
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          notes: notes || undefined,
+          photoUrls,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Não foi possível registrar a atividade");
+        setStep("form");
+        return;
+      }
+      openDetail({ ...selected, ...data.execution });
+    } catch {
+      await queueCompletionOffline();
+    }
   }
 
   async function logout() {
@@ -300,9 +368,17 @@ export default function MaintenancePage() {
             <p className="text-sm font-medium leading-tight">{userName || "..."}</p>
           </div>
         </div>
-        <button onClick={logout} className="rounded-full bg-white/5 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/10">
-          Sair
-        </button>
+        <div className="flex items-center gap-2">
+          {!isOnline && <span className="rounded-full bg-red-500/20 px-2 py-1 text-[11px] font-medium text-red-300">Offline</span>}
+          {pendingSync > 0 && (
+            <span className="rounded-full bg-amber-500/20 px-2 py-1 text-[11px] font-medium text-amber-300">
+              {pendingSync} pendente(s)
+            </span>
+          )}
+          <button onClick={logout} className="rounded-full bg-white/5 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/10">
+            Sair
+          </button>
+        </div>
       </header>
 
       <main className="flex flex-1 flex-col items-center px-5 pb-16 pt-2">
@@ -575,6 +651,27 @@ export default function MaintenancePage() {
             <div>
               <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-emerald-400" />
               <p className="text-sm text-slate-300">Registrando atividade...</p>
+            </div>
+          </div>
+        )}
+
+        {step === "queued" && (
+          <div className="flex flex-1 items-center justify-center">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center text-slate-900 shadow-xl">
+              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-3xl text-amber-600">
+                📶
+              </div>
+              <h2 className="text-lg font-semibold">Salvo no aparelho</h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Sem conexão no momento — o registro (com fotos e observações) ficou guardado neste celular e será
+                enviado automaticamente para o sistema assim que a internet voltar.
+              </p>
+              <button
+                onClick={backToList}
+                className="mt-6 w-full rounded-xl bg-slate-900 py-3.5 text-sm font-medium text-white hover:bg-slate-800 active:scale-[0.98]"
+              >
+                Voltar às atividades
+              </button>
             </div>
           </div>
         )}

@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import OccurrenceForm from "@/components/OccurrenceForm";
 import MultiPhotoInput from "@/components/MultiPhotoInput";
 import { uploadPhotos } from "@/lib/uploadPhoto";
-import { flushPendingScans, listPendingScans, queueScan } from "@/lib/offlineQueue";
+import { cacheEquipment, countAllPending, flushPendingOccurrences, flushPendingScans, getCachedEquipment, queueScan } from "@/lib/offlineQueue";
 
 const QrScanner = dynamic(() => import("@/components/QrScanner"), { ssr: false });
 
@@ -84,12 +84,12 @@ function ScanPageInner() {
   const [isOnline, setIsOnline] = useState(true);
 
   const refreshPendingCount = useCallback(() => {
-    listPendingScans().then((list) => setPendingSync(list.length));
+    countAllPending().then(setPendingSync);
   }, []);
 
   const trySync = useCallback(async () => {
-    const { synced } = await flushPendingScans();
-    if (synced > 0) refreshPendingCount();
+    const [scanResult, occurrenceResult] = await Promise.all([flushPendingScans(), flushPendingOccurrences()]);
+    if (scanResult.synced > 0 || occurrenceResult.synced > 0) refreshPendingCount();
   }, [refreshPendingCount]);
 
   const startRound = useCallback(async (plantId: string, routeId?: string) => {
@@ -165,7 +165,12 @@ function ScanPageInner() {
           setStep("home");
         }
       }
-    );
+    ).catch(() => {
+      // Offline on cold start (no usinas/rondas loaded yet) — surface a clear
+      // message instead of leaving the spinner running forever.
+      setError("Sem conexão com a internet. Conecte-se ao menos uma vez para carregar suas usinas e rotas.");
+      setStep("error");
+    });
 
     refreshPendingCount();
     setIsOnline(navigator.onLine);
@@ -212,57 +217,102 @@ function ScanPageInner() {
     setPhotoFiles([]);
   }
 
-  const processToken = useCallback(async (token: string) => {
-    setStep("resolving");
-    setError(null);
-    try {
-      const res = await fetch(`/api/qr/${token}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "QR Code inválido");
-        setStep("error");
-        return;
-      }
-      setEquipment(data.equipment);
-      setStep("locating");
-
-      if (!("geolocation" in navigator)) {
-        setError("Este dispositivo não tem suporte a geolocalização.");
-        setStep("error");
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setReading({
-            token,
-            capturedAt: new Date().toISOString(),
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracyMeters: position.coords.accuracy,
-          });
-          setStep("review");
-        },
-        () => {
-          setError("Permissão de localização negada. Ative o GPS para registrar a inspeção.");
-          setStep("error");
-        },
-        { enableHighAccuracy: true, timeout: 15000 }
-      );
-    } catch {
-      setError("Falha de conexão ao validar o QR Code.");
+  const proceedToLocating = useCallback((token: string) => {
+    setStep("locating");
+    if (!("geolocation" in navigator)) {
+      setError("Este dispositivo não tem suporte a geolocalização.");
       setStep("error");
+      return;
     }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setReading({
+          token,
+          capturedAt: new Date().toISOString(),
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyMeters: position.coords.accuracy,
+        });
+        setStep("review");
+      },
+      () => {
+        setError("Permissão de localização negada. Ative o GPS para registrar a inspeção.");
+        setStep("error");
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
   }, []);
+
+  const processToken = useCallback(
+    async (token: string) => {
+      setStep("resolving");
+      setError(null);
+      try {
+        const res = await fetch(`/api/qr/${token}`);
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error ?? "QR Code inválido");
+          setStep("error");
+          return;
+        }
+        setEquipment(data.equipment);
+        cacheEquipment(token, data.equipment); // fire-and-forget: available offline next time
+        proceedToLocating(token);
+      } catch {
+        // No network to validate against the server — fall back to a previous
+        // successful scan of this same equipment, if this device has one cached.
+        const cached = await getCachedEquipment(token);
+        if (cached) {
+          setEquipment(cached);
+          proceedToLocating(token);
+          return;
+        }
+        setError(
+          "Sem conexão para validar este QR Code, e este equipamento ainda não foi escaneado antes neste aparelho (por isso não está disponível offline)."
+        );
+        setStep("error");
+      }
+    },
+    [proceedToLocating]
+  );
+
+  async function queueReadingOffline() {
+    if (!reading || !equipment) return;
+    await queueScan({
+      id: crypto.randomUUID(),
+      qrToken: reading.token,
+      equipmentName: equipment.name,
+      latitude: reading.latitude,
+      longitude: reading.longitude,
+      accuracyMeters: reading.accuracyMeters,
+      deviceInfo: navigator.userAgent,
+      roundId: round?.id,
+      notes: notes || undefined,
+      photoBlobs: photoFiles,
+      offlineCreatedAt: reading.capturedAt,
+    });
+    refreshPendingCount();
+    setResult({ scannedAt: reading.capturedAt, distanceFlag: null, equipmentId: equipment.id });
+    if (round) setRound({ ...round, scans: [...round.scans, { equipmentId: equipment.id }] });
+    setStep("done");
+  }
 
   async function confirmReading() {
     if (!reading || !equipment) return;
     setStep("submitting");
 
+    // Offline-first: photos are never uploaded up front — that would require
+    // network just to queue a reading. Only the online path uploads them now;
+    // the offline path stores the raw files and uploads at sync time instead.
+    if (!navigator.onLine) {
+      await queueReadingOffline();
+      return;
+    }
+
     const { urls: photoUrls, error: uploadError } = await uploadPhotos(photoFiles);
     if (uploadError) {
-      setError(uploadError);
-      setStep("error");
+      // Connection likely dropped mid-flow — queue instead of losing the reading.
+      await queueReadingOffline();
       return;
     }
 
@@ -276,20 +326,6 @@ function ScanPageInner() {
       notes: notes || undefined,
       photoUrls,
     };
-
-    if (!navigator.onLine) {
-      await queueScan({
-        id: crypto.randomUUID(),
-        equipmentName: equipment.name,
-        offlineCreatedAt: reading.capturedAt,
-        ...payload,
-      });
-      refreshPendingCount();
-      setResult({ scannedAt: reading.capturedAt, distanceFlag: null, equipmentId: equipment.id });
-      if (round) setRound({ ...round, scans: [...round.scans, { equipmentId: equipment.id }] });
-      setStep("done");
-      return;
-    }
 
     try {
       const submitRes = await fetch("/api/scans", {
@@ -311,8 +347,9 @@ function ScanPageInner() {
       if (round) setRound({ ...round, scans: [...round.scans, { equipmentId: submitData.scan.equipmentId }] });
       setStep("done");
     } catch {
-      setError("Falha de conexão ao registrar a inspeção.");
-      setStep("error");
+      // Network dropped between the photo upload and the scan submission — queue it
+      // rather than showing a hard error (photos are re-uploaded once back online).
+      await queueReadingOffline();
     }
   }
 

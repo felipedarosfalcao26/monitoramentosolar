@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { uploadPhotos } from "@/lib/uploadPhoto";
+import { queueOccurrence } from "@/lib/offlineQueue";
 import MultiPhotoInput from "@/components/MultiPhotoInput";
 
 const CATEGORIES: { value: string; label: string }[] = [
@@ -37,14 +38,36 @@ export default function OccurrenceForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  async function queueOffline() {
+    await queueOccurrence({
+      id: crypto.randomUUID(),
+      plantId,
+      equipmentId,
+      scanId,
+      category,
+      severity,
+      description: description || undefined,
+      photoBlobs: photoFiles,
+      offlineCreatedAt: new Date().toISOString(),
+    });
+    onDone();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError(null);
     try {
+      // Offline-first: never require network just to queue the occurrence —
+      // photos are only uploaded here on the online path.
+      if (!navigator.onLine) {
+        await queueOffline();
+        return;
+      }
+
       const { urls: photoUrls, error: uploadError } = await uploadPhotos(photoFiles);
       if (uploadError) {
-        setError(uploadError);
+        await queueOffline();
         return;
       }
 
@@ -59,6 +82,8 @@ export default function OccurrenceForm({
         return;
       }
       onDone();
+    } catch {
+      await queueOffline();
     } finally {
       setSaving(false);
     }
